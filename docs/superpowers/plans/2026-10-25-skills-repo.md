@@ -22,6 +22,7 @@
 - Имена переменных ipmi-ops (закреплено): `IPMI_MELLANOX_HOST`, `IPMI_MELLANOX_BMC`, `IPMI_BAZZITE_HOST`, `IPMI_BAZZITE_BMC`, `IPMI_ASR1_HOST`, `IPMI_ASR1_BMC` (маппинг на столбцы таблицы — по её заголовкам).
 - CRE: `podman`, при существовании `/run/.containerenv` — `podman-remote` (авто в Makefile и install.sh; хардкод запрещён).
 - Коммиты — на английском; в containerfile нет завершающих (inline) комментариев; rm в скриптах репо не используется; `make test` включает `scripts/test-no-sensitive.sh` и обязан проходить на каждом коммите (для коммитов Tasks 1–3, где Makefile ещё нет, — его компоненты: `sh scripts/test-no-sensitive.sh` + `node --test` существующих тестов).
+- Гейт `node --test` — glob-форма `node --test "<dir>/**/*.test.mjs"` (Node 22: позиционные аргументы — glob-паттерны, голая директория не разворачивается в тесты).
 - Формат opencode-конфига: современный `mcp.servers.<имя>` (local: `type`+`command`; remote: `type`+`url`+`headers`).
 
 ## Review Focus
@@ -130,14 +131,14 @@ Expected: FAIL (модуль `server.mjs` не найден).
 
 - [ ] **Step 3: Реализовать parseFrontmatter, discoverSkills, defaultSkillsDir**
 
-`server.mjs` (ESM). Frontmatter: блок между первой `---` и следующей `---`, пары `key: value`. Discovery: entry с SKILL.md → скилл; иначе — подкаталоги с SKILL.md; иначе skip + stderr. `defaultSkillsDir` = `join(dirname(fileURLToPath(import.meta.url)), "skills")`.
+`server.mjs` (ESM). Frontmatter: блок между первой `---` и следующей `---`, пары `key: value`. Discovery: entry с SKILL.md → скилл; иначе — подкаталоги с SKILL.md; иначе skip + stderr. `defaultSkillsDir` = `resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills")` (соседский `skills/` к каталогу server.mjs — работает и в чекауте репо, и в образе, т.к. containerfile кладёт server.mjs в `server/`).
 
 - [ ] **Step 4: Failing-тест tools**
 
 `server/test/tools.test.mjs` (assertions закреплёны):
 - `discoverSkills([fixtures/skills])` → ровно 2 скилла (alpha, beta); `alpha.files` содержит `tool.txt`.
 - `discoverSkills([fixtures/skills/alpha, fixtures/skills/beta])` (entry = сами каталоги скиллов) → 2 скилла.
-- `defaultSkillsDir()` → `join(dirname(<каталог server.mjs>), "skills")`.
+- `defaultSkillsDir()` → `resolve(join(dirname(<каталог server.mjs>), "..", "skills"))` (в репо — `<repo>/skills`).
 - `buildTools` → имена: `list_skills`, `alpha_docs`, `beta_docs`, `skill_file`.
 - `initialize` с `protocolVersion "2025-03-26"` → эхо + `serverInfo.name === "skills"`.
 - `tools/call alpha_docs` без args → полный файл (`## One` и `name: alpha`).
@@ -167,7 +168,7 @@ Expected: PASS.
 
 Main-guard: `if (import.meta.url === pathToFileURL(process.argv[1]).href) main()`.
 
-Run: `node --test server/test`
+Run: `node --test "server/test/**/*.test.mjs"`
 Expected: PASS (3 файла).
 
 - [ ] **Step 8: Commit**
@@ -195,6 +196,7 @@ git commit -m "feat: MCP server core — skill discovery, tools, stdio transport
 - `POST /mcp` с `notifications/initialized` (без `id`) → 202, пустое тело.
 - `GET /healthz` → 200.
 - `GET /mcp` → 200, content-type начинается с `text/event-stream`.
+- `defaultSkillsDir`-зависимостей в этом тесте нет (spawn с явным `SKILLS_DIRS`).
 
 - [ ] **Step 2: Run — FAIL**
 
@@ -207,7 +209,7 @@ Expected: FAIL (нет http-ветки; процесс уходит в stdio-р�
 
 - [ ] **Step 4: Run — PASS**
 
-Run: `node --test server/test`
+Run: `node --test "server/test/**/*.test.mjs"`
 Expected: PASS (4 файла).
 
 - [ ] **Step 5: Commit**
@@ -254,12 +256,14 @@ Expected: 3 ok, exit 0.
 FROM node:22-alpine
 
 WORKDIR /app
-COPY server.mjs .
+COPY server.mjs server/server.mjs
 COPY skills/ ./skills/
 
 EXPOSE 8080
-CMD ["node", "server.mjs"]
+CMD ["node", "server/server.mjs"]
 ```
+
+(Раскладка 1:1 с чекаутом репо: server.mjs в `server/`, `skills/` соседний — дефолт `defaultSkillsDir` (соседский) работает в образе без `SKILLS_DIRS`.)
 
 - [ ] **Step 4: Makefile**
 
@@ -275,11 +279,11 @@ IMAGE ?= skills-mcp:local
 build:
 	@mkdir -p .build; CTX=$$(mktemp -d .build/ctx-XXXXXX); \
 	scripts/render.sh skills $$CTX/skills && \
-	cp server/server.mjs $$CTX/server.mjs && \
+	mkdir -p $$CTX/server && cp server/server.mjs $$CTX/server/server.mjs && \
 	$(CRE) build -f containerfile -t $(IMAGE) $$CTX
 
 test:
-	node --test server/test
+	node --test "server/test/**/*.test.mjs"
 	sh scripts/test-no-sensitive.sh
 	sh scripts/test-render.sh
 
@@ -356,7 +360,7 @@ Expected: синтаксис ок. (Живой прогон — Task 6.)
 
 - [ ] **Step 4: Расширить test-таргет + make test + commit**
 
-Makefile: в цели `test` строку `node --test server/test` заменить на `node --test server/test scripts/test`.
+Makefile: в цели `test` строку `node --test "server/test/**/*.test.mjs"` заменить на `node --test "server/test/**/*.test.mjs" "scripts/test/**/*.test.mjs"`.
 
 Run: `make test`
 Expected: PASS (node --test теперь включает `scripts/test`).
