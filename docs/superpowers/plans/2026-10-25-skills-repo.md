@@ -21,7 +21,7 @@
 - Плейсхолдеры: `@VAR@`; `local.mk` в корне репо, строки `VAR := value` / `VAR = value`; `local.mk.example` в git, значения только 192.0.2.0/24.
 - Имена переменных ipmi-ops (закреплено): `IPMI_MELLANOX_HOST`, `IPMI_MELLANOX_BMC`, `IPMI_BAZZITE_HOST`, `IPMI_BAZZITE_BMC`, `IPMI_ASR1_HOST`, `IPMI_ASR1_BMC` (маппинг на столбцы таблицы — по её заголовкам).
 - CRE: `podman`, при существовании `/run/.containerenv` — `podman-remote` (авто в Makefile и install.sh; хардкод запрещён).
-- Коммиты — на английском; в containerfile нет завершающих (inline) комментариев; rm в скриптах репо не используется; `make test` включает `scripts/test-no-sensitive.sh` и обязан проходить на каждом коммите.
+- Коммиты — на английском; в containerfile нет завершающих (inline) комментариев; rm в скриптах репо не используется; `make test` включает `scripts/test-no-sensitive.sh` и обязан проходить на каждом коммите (для коммитов Tasks 1–3, где Makefile ещё нет, — его компоненты: `sh scripts/test-no-sensitive.sh` + `node --test` существующих тестов).
 - Формат opencode-конфига: современный `mcp.servers.<имя>` (local: `type`+`command`; remote: `type`+`url`+`headers`).
 
 ## Review Focus
@@ -114,12 +114,13 @@ git commit -m "feat: migrate five skills into canonical repo with local.mk exter
 Фикстуры (закреплено):
 - `alpha/SKILL.md`: frontmatter `name: alpha`, `description: Alpha test skill: with colon — and em dash`; тело: `# Alpha`, `## One` («One body.»), `## Two` («Two body.»).
 - `alpha/tool.txt`: `hello tool`
+- `alpha/blob.bin`: бинарный файл (содержит NUL-байт).
 - `beta/SKILL.md`: `name: beta`, `description: Beta skill`; `## Only` («Only body.»).
 - `notaskill/readme.txt`: `not a skill` (без SKILL.md).
 
 - [ ] **Step 1: Фикстуры + failing-тест frontmatter**
 
-`server/test/frontmatter.test.mjs`: `parseFrontmatter` на alpha/beta + 2 реальных samples (строки description из frontmatter `~/.config/opencode/skills/mellanox-flash-ops/SKILL.md` и `basecalc/SKILL.md` — с эм-дэшами/двоеточиями). Assert: точные `name`/`description`, `body` начинается с `# `.
+`server/test/frontmatter.test.mjs`: `parseFrontmatter` на alpha/beta + 2 реальных samples — строки description из frontmatter `~/.config/opencode/skills/mellanox-flash-ops/SKILL.md` и `basecalc/SKILL.md` (с эм-дэшами/двоеточиями), **скопированные литералами** в тест-файл при написании (сверка с исходниками — на этапе написания теста; в рантайме тест файлы вне репо НЕ читает — после Task 6 эти пути изменятся). Assert: точные `name`/`description`, `body` начинается с `# `.
 
 - [ ] **Step 2: Run — FAIL**
 
@@ -134,6 +135,8 @@ Expected: FAIL (модуль `server.mjs` не найден).
 
 `server/test/tools.test.mjs` (assertions закреплёны):
 - `discoverSkills([fixtures/skills])` → ровно 2 скилла (alpha, beta); `alpha.files` содержит `tool.txt`.
+- `discoverSkills([fixtures/skills/alpha, fixtures/skills/beta])` (entry = сами каталоги скиллов) → 2 скилла.
+- `defaultSkillsDir()` → `join(dirname(<каталог server.mjs>), "skills")`.
 - `buildTools` → имена: `list_skills`, `alpha_docs`, `beta_docs`, `skill_file`.
 - `initialize` с `protocolVersion "2025-03-26"` → эхо + `serverInfo.name === "skills"`.
 - `tools/call alpha_docs` без args → полный файл (`## One` и `name: alpha`).
@@ -141,8 +144,9 @@ Expected: FAIL (модуль `server.mjs` не найден).
 - `alpha_docs {section: "zzz"}` → `isError: true`, текст содержит `One` и `Two`.
 - `list_skills` → строка `alpha — Alpha test skill` (формат `<имя> — <description> (files: …)`).
 - `skill_file {skill: "alpha", path: "tool.txt"}` → `hello tool`.
-- `skill_file {path: "../notaskill/readme.txt"}` → `isError`, текст `outside skill dir`.
-- `skill_file {skill: "gamma"}` → `isError`, текст `unknown skill`.
+- `skill_file {skill: "alpha", path: "../notaskill/readme.txt"}` → `isError`, текст `outside skill dir`.
+- `skill_file {skill: "gamma", path: "x"}` → `isError`, текст `unknown skill`.
+- `skill_file {skill: "alpha", path: "blob.bin"}` → `isError`, текст `binary`.
 - `resources/list` → 2 resource: `mcp://skills/alpha/SKILL.md`, `mcp://skills/beta/SKILL.md`.
 - `resources/read` alpha-uri → полный SKILL.md alpha.
 - неизвестный tool → error `-32602`; method `bogus` → error `-32601`.
@@ -187,6 +191,7 @@ git commit -m "feat: MCP server core — skill discovery, tools, stdio transport
 `server/test/http.test.mjs`: spawn `node server/server.mjs` с env `MCP_MODE=http`, `PORT=0`, `SKILLS_DIRS=<fixtures>`; дождаться `listening on port (\d+)` в stderr; затем `fetch`:
 - `POST /mcp` initialize → 200, content-type начинается с `application/json`, `serverInfo.name === "skills"`.
 - `POST /mcp` `tools/call list_skills` → текст содержит `alpha`.
+- `POST /mcp` с `notifications/initialized` (без `id`) → 202, пустое тело.
 - `GET /healthz` → 200.
 - `GET /mcp` → 200, content-type начинается с `text/event-stream`.
 
@@ -197,7 +202,7 @@ Expected: FAIL (нет http-ветки; процесс уходит в stdio-р�
 
 - [ ] **Step 3: Реализовать http-ветку**
 
-`node:http`. `POST /mcp`: тело — одно JSON-RPC-сообщение (массив → error `-32603`), ответ `application/json` через `handleRequest`. `GET /mcp`: 200, `text/event-stream`, стрим открыт, закрывается по disconnect клиента. `GET /healthz`: 200 `ok`. Остальные пути → 404. При `MCP_MODE=http` stdin не читается.
+`node:http`. `POST /mcp`: тело — одно JSON-RPC-сообщение (массив → error `-32603`), ответ `application/json` через `handleRequest`; сообщение без `id` (notification, напр. `notifications/initialized`) → `202 Accepted`, пустое тело. `GET /mcp`: 200, `text/event-stream`, стрим открыт, закрывается по disconnect клиента. `GET /healthz`: 200 `ok`. Остальные пути → 404. При `MCP_MODE=http` stdin не читается.
 
 - [ ] **Step 4: Run — PASS**
 
@@ -263,10 +268,11 @@ CRE ?= podman
 else
 CRE ?= podman-remote
 endif
+-include local.mk
 IMAGE ?= skills-mcp:local
 
 build:
-	@CTX=$$(mktemp -d .build/ctx-XXXXXX); \
+	@mkdir -p .build; CTX=$$(mktemp -d .build/ctx-XXXXXX); \
 	scripts/render.sh skills $$CTX/skills && \
 	cp server/server.mjs $$CTX/server.mjs && \
 	$(CRE) build -f containerfile -t $(IMAGE) $$CTX
@@ -312,6 +318,7 @@ git commit -m "feat: container build pipeline — render.sh, Makefile (CRE auto)
 - Produces:
   - `scripts/patch-mcp-config.mjs set <config.jsonc> <server-name> <json-entry>` — вписать `mcp.servers.<name> = <json-entry>` (создать блок, остальное сохранить).
   - `scripts/patch-mcp-config.mjs remove <config.jsonc> <top-level-key>` — удалить топовый ключ.
+  - Модуль экспортирует `parseJsonc(text) -> object` (переиспользуется one-liner'ом Task 6).
   - JSONC-вход: `//`, `/* */`, trailing commas, URL с `//`; вывод: нормализованный JSON, indent 2 (комментарии не сохраняются).
   - `scripts/install.sh` (из корня репо; env `SKILLS_MCP_URL` → remote-запись).
 
@@ -388,7 +395,7 @@ done
 
 - [ ] **Step 4: Конфиг: context7 + skills**
 
-Достать entry context7 из `mcp1` (node one-liner с JSONC-strip — переиспользовать функцию patch-mcp-config.mjs); затем:
+Достать entry context7 из `mcp1` (node one-liner через `parseJsonc` из patch-mcp-config.mjs); **убрать из entry поле `enabled`** (в современном `mcp.servers` используется `disabled`); затем:
 
 ```sh
 node scripts/patch-mcp-config.mjs set ~/.config/opencode/opencode.jsonc context7 '<достатый entry>'
@@ -427,14 +434,14 @@ Expected: вывод содержит все 5 имён скиллов. Убит
 
 - [ ] **Step 3: Живой проб G5 (Review Focus 2)**
 
-Свежая сессия (интерактивная или `opencode run`), context7 активен. Вопрос (закреплён): «Какой командой сделать ri-дамп прошивки на root-mellanox? Покажи только команду, ничего не выполняй.»
+Свежая сессия (интерактивная или `opencode run`). Предварительно убедиться, что context7 активен: вопросом по общей (немелланоксовой) теме проверить, что агент вызывает инструмент context7. Вопрос проба (закреплён): «Какой командой сделать ri-дамп прошивки на root-mellanox? Покажи только команду, ничего не выполняй.»
 Проход: агент консультирует `mellanox_flash_docs` (или скилл mellanox-flash-ops) до ответа; в ответе — `mstflint`; нет `flint`/`mlxconfig`/`mlxlink` в качестве первичных, нет `/dev/mst`.
 Провал: доложить владельцу, поправить формулировки tool description, повторить проб (малый скоуп).
 Транскрипт → `docs/acceptance/2026-10-25-live-probe.md` (вопрос, вызовы инструментов, ответ, вердикт).
 
 - [ ] **Step 4: Статус спеки + commit + push**
 
-Спека: «Статус: черновик, ждёт одобрения владельца» → «Статус: утверждено владельцем 2026-10-25».
+Статус спеки уже переключён на «утверждено владельцем 2026-10-25» (сделано вместе с коммитом замечаний ревью плана).
 
 ```sh
 git add -A
