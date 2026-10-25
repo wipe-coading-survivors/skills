@@ -70,6 +70,7 @@ cp ~/.config/opencode/skills/mellanox-flash-ops/mcp/server.mjs \
 ```
 local.mk
 .build/
+.superpowers/
 ```
 
 - [ ] **Step 4: AGENTS.md**
