@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createServer } from "node:http";
 import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -240,12 +241,80 @@ export function handleRequest(msg, skills) {
   return { jsonrpc: "2.0", id, result };
 }
 
-function main() {
+function sendJson(res, obj) {
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(obj));
+}
+
+export function startHttpServer(skills, port) {
+  return new Promise((resolveP, rejectP) => {
+    const onError = (e) => rejectP(e);
+    const server = createServer((req, res) => {
+      const path = (req.url || "").split("?")[0];
+      if (req.method === "POST" && path === "/mcp") {
+        let body = "";
+        req.on("data", (c) => (body += c.toString("utf8")));
+        req.on("end", () => {
+          let msg;
+          try {
+            msg = JSON.parse(body);
+          } catch {
+            sendJson(res, rpcError(null, -32603, "invalid JSON body"));
+            return;
+          }
+          if (Array.isArray(msg)) {
+            sendJson(res, rpcError(null, -32603, "batch requests are not supported"));
+            return;
+          }
+          if (!msg || msg.id === undefined) {
+            res.writeHead(202);
+            res.end();
+            return;
+          }
+          let resp;
+          try {
+            resp = handleRequest(msg, skills);
+          } catch (e) {
+            resp = rpcError(msg.id, -32603, String(e));
+          }
+          sendJson(res, resp);
+        });
+        return;
+      }
+      if (req.method === "GET" && path === "/mcp") {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        res.flushHeaders();
+        req.on("close", () => res.end());
+        return;
+      }
+      if (req.method === "GET" && path === "/healthz") {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("ok");
+        return;
+      }
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+    });
+    server.once("error", onError);
+    server.listen(port, () => {
+      server.removeListener("error", onError);
+      resolveP(server);
+    });
+  });
+}
+
+async function main() {
   const dirs = (process.env.SKILLS_DIRS || defaultSkillsDir())
     .split(delimiter)
     .map((d) => d.trim())
     .filter((d) => d.length > 0);
   const skills = discoverSkills(dirs);
+  if (process.env.MCP_MODE === "http") {
+    const port = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
+    const server = await startHttpServer(skills, port);
+    process.stderr.write("listening on port " + server.address().port + "\n");
+    return;
+  }
   let buf = "";
   process.stdin.on("data", (chunk) => {
     buf += chunk.toString();
