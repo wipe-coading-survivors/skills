@@ -80,14 +80,18 @@ Anti-goals (условие провала):
 - Агент по mstflint/flash-вопросам всё ещё следует context7/MLNX_OFED-докам
   (проверяется живым пробом, §9).
 - Тихий дрифт: канон в репо и хостовые копии расходятся.
-- IP-адреса/секреты попали в git-историю.
+- IP-адреса/секреты попали в git-историю (предупреждает
+  `scripts/test-no-sensitive.sh` в `make test`: значения `local.mk` +
+  общий regex частных IP-диапазонов по всем tracked-файлам).
 - На (будущем) новом хосте больше двух шагов: clone + `scripts/install.sh`.
 
 ## 3. Решения владельца (из обсуждения)
 
 1. Репо: `~/git/IMPLEMENTATION/skills` (имя — `skills`).
 2. Сервер читает список каталогов скиллов: список путей из env/арга, по
-   умолчанию — свой каталог. Каталог = скилл, если в нём есть SKILL.md.
+   умолчанию — каталог `skills/` рядом с сервером. Каталог = скилл, если
+   в нём есть SKILL.md. В репо каталоги скиллов — в подкаталоге `skills/`
+   (не в корне).
 3. Внутри контейнера nodejs; оба варианта развёртывания — first-class:
    (а) локальный stdio-контейнер на каждом хосте; (б) центральный
    общедоступный по HTTP сервер для всех хостов.
@@ -111,11 +115,12 @@ Anti-goals (условие провала):
 
 ```
 ~/git/IMPLEMENTATION/skills/
-  analyzing-opencode-logs/   SKILL.md  oclog.py
-  basecalc/                  SKILL.md  calc.py
-  ipmi-ops/                  SKILL.md  sol_bridge.py
-  mellanox-flash-ops/        SKILL.md
-  mellanox-fw-build/         SKILL.md
+  skills/                    # каталоги скиллов (решение владельца)
+    analyzing-opencode-logs/ SKILL.md  oclog.py
+    basecalc/                SKILL.md  calc.py
+    ipmi-ops/                SKILL.md  sol_bridge.py
+    mellanox-flash-ops/      SKILL.md
+    mellanox-fw-build/       SKILL.md
   server/
     server.mjs               # MCP-сервер, ноль npm-зависимостей
     test/                    # node --test
@@ -126,26 +131,26 @@ Anti-goals (условие провала):
   .gitignore
   scripts/
     install.sh               # установка на хост (G4)
-    safe-rm                  # удаления по переменным путям (портируется из mlxini)
+    test-no-sensitive.sh     # чек: нет чувствительных значений в tracked-файлах (уже в репо)
   docs/
     superpowers/specs/       # этот документ
     reference/               # прототип сервера (см. §8)
   AGENTS.md                  # минимальный: build/test, CRE, english-commits
 ```
 
-Каталоги скиллов — в корне репо рядом с `server/`. В образе `server.mjs` и
-каталоги скиллов оказываются бок о бок в `/app` — дефолт сканирования
-(«свой каталог») работает и в образе. При запуске из чистого чекаута
-(без контейнера) сканер так же сканирует корень чекаута: нескилловые
-каталоги (`server/`, `scripts/`, `docs/`) пропускаются с предупреждением
-(нет SKILL.md).
+Каталоги скиллов — в подкаталоге `skills/` репо (решение владельца:
+монтировать один каталог в контейнер проще). В образе: `server.mjs` →
+`/app/server.mjs`, `skills/` → `/app/skills/` — дефолт сканирования
+работает и в образе, и в чекауте; монтаж `<repo>/skills` → `/app/skills` —
+один том.
 
 ## 5. Спецификация MCP-сервера
 
 **Обнаружение:**
 
 - `SKILLS_DIRS` (env, список путей через `:`) или аргумент CLI; по
-  умолчанию — каталог, где лежит `server.mjs`.
+  умолчанию — подкаталог `skills/` рядом с каталогом, где лежит
+  `server.mjs` (в образе: `/app/skills`; в чекауте: `<repo>/skills`).
 - Каталог — скилл, если содержит `SKILL.md`; иначе — пропуск + предупреждение
   в stderr.
 - Frontmatter `SKILL.md` (`name`, `description`) парсится для описаний.
@@ -219,7 +224,9 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
 существует `/run/.containerenv` (no-cre-hardcode). Цели:
 
 - `build` — образ (имя, напр. `skills-mcp:local`, — выбор билдера);
-- `test` — `node --test` (сервер + рендер, без контейнера);
+- `test` — `node --test` (сервер + рендер, без контейнера) +
+  `scripts/test-no-sensitive.sh` (запускается из Makefile; проверка, что
+  значений `local.mk` и частных IP нет в tracked-файлах);
 - `smoke` — поднять контейнер (stdio), отправить `initialize` +
   `tools/list`, проверить ожидаемый набор инструментов;
 - `run-http` — `$(CRE) run --rm -p 8080:8080 -e MCP_MODE=http <образ>`.
@@ -232,10 +239,11 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
    значения на все плейсхолдеры.
 2. Для каждого скилла:
    - без плейсхолдеров: `mkdir -p ~/.config/opencode/skills/<имя>`;
-     `ln -sf <репо>/<имя>/SKILL.md ~/.config/opencode/skills/<имя>/SKILL.md`
-     (паттерн irisc-asm). Если там был обычный файл — удаляется только после
-     проверки, что репо-файл существует и не пуст; удаление по переменным
-     путям — только через `safe-rm`.
+     `ln -sf <репо>/skills/<имя>/SKILL.md ~/.config/opencode/skills/<имя>/SKILL.md`
+     (паттерн irisc-asm). Если на месте цели уже лежит обычный файл
+     (до-миграционное состояние) — скрипт ошибается с подсказкой про
+     одноразовую миграцию (§8): install.sh ничего не удаляет, rm в скриптах
+     нет (safe-rm не портируется).
    - с плейсхолдерами (сейчас: `ipmi-ops`): отрендеренная обычная копия
      `SKILL.md` в `~/.config/opencode/skills/<имя>/` + md5-контроль
      (fallback-паттерн irisc-asm: после обновления репо-файла/`local.mk`
@@ -278,7 +286,10 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
    .py проверить на CWD-независимость (пути относительно себя), при
    необходимости поправить.
 4. GitHub: `gh repo create` (private) + `git remote add origin` + push.
-5. Начальный коммит с контентом; `make build`; `scripts/install.sh`.
+5. Начальный коммит с контентом; `make build`; ручная замена старых обычных
+   файлов в `~/.config/opencode/skills/<имя>/` на симлинки (контент уже
+   сохранён в git; скрипты замену не делают, rm не используют);
+   `scripts/install.sh`.
 6. Очистка `opencode.jsonc`: удалить невалидные ключи `mcp-mlnx` и
    `mcp1`; перенести запись context7 из `mcp1` в `mcp.servers.context7`
    (type remote, url, headers) — context7 становится активным.
@@ -298,8 +309,8 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
   - `resources/list` / `resources/read`;
   - http: `POST /mcp` (initialize + tools/list + tools/call), `/healthz`;
   - рендер: подстановка по `local.mk`; плейсхолдер без значения → ошибка;
-    в git-контенте репо реальных IP нет (проверка на вхождение значений
-    `local.mk` в закоммиченные файлы).
+  - `scripts/test-no-sensitive.sh` (уже в репо): значения `local.mk` и
+    частные IP-диапазоны не встречаются в tracked-файлах (часть `make test`).
 - `make smoke` — живой контейнер (stdio-хендшейк).
 - В живой opencode-сессии: все пять скиллов в `available_skills`,
   инструменты сервера отвечают, `mellanox_flash_docs` отдаёт отрендеренный
@@ -337,6 +348,9 @@ context7 включён, реальный mstflint-вопрос (напр. «с�
   https://opencode.ai/config.json (ключ `mcp`, подблок `servers`;
   local: type+command, remote: type+url+headers; плоская форма
   `mcp: {<name>: …}` — deprecated).
-- Правила no-cre-hardcode, rm-rf-guard, english-commits — из `AGENTS.md`
-  mlxini; портируются в AGENTS.md нового репо.
+- Правила no-cre-hardcode, english-commits — из `AGENTS.md` mlxini;
+  портируются в AGENTS.md нового репо (rm-rf-guard/safe-rm не портируются:
+  rm в наших скриптах нет).
+- `scripts/test-no-sensitive.sh` — портирован из параллельного проекта
+  (уже в репо); запускается из Makefile (`make test`).
 - GitHub: `gh auth status` — авторизован; репо создаётся при миграции.
