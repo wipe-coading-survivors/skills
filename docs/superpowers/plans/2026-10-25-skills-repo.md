@@ -292,7 +292,7 @@ smoke: build
 	@OUT=$$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | $(CRE) run --rm -i $(IMAGE)); \
 	echo "$$OUT" | grep -q '"name":"skills"' && \
 	echo "$$OUT" | grep -q 'list_skills' && \
-	echo "$$OUT" | grep -q 'mellanox_flash_docs' && echo smoke-ok
+	echo "$$OUT" | grep -q 'mellanox_flash_ops_docs' && echo smoke-ok
 
 run-http: build
 	$(CRE) run --rm -p 8080:8080 -e MCP_MODE=http $(IMAGE)
@@ -441,7 +441,7 @@ Expected: вывод содержит все 5 имён скиллов. Убит
 - [ ] **Step 3: Живой проб G5 (Review Focus 2)**
 
 Свежая сессия (интерактивная или `opencode run`). Предварительно убедиться, что context7 активен: вопросом по общей (немелланоксовой) теме проверить, что агент вызывает инструмент context7. Вопрос проба (закреплён): «Какой командой сделать ri-дамп прошивки на root-mellanox? Покажи только команду, ничего не выполняй.»
-Проход: агент консультирует `mellanox_flash_docs` (или скилл mellanox-flash-ops) до ответа; в ответе — `mstflint`; нет `flint`/`mlxconfig`/`mlxlink` в качестве первичных, нет `/dev/mst`.
+Проход: агент консультирует `mellanox_flash_ops_docs` (или скилл mellanox-flash-ops) до ответа; в ответе — `mstflint`; нет `flint`/`mlxconfig`/`mlxlink` в качестве первичных, нет `/dev/mst`.
 Провал: доложить владельцу, поправить формулировки tool description, повторить проб (малый скоуп).
 Транскрипт → `docs/acceptance/2026-10-25-live-probe.md` (вопрос, вызовы инструментов, ответ, вердикт).
 
