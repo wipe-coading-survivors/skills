@@ -334,15 +334,18 @@ WARN. (Ложные совпадения по подстроке — мои со
 
 ### Исправленная заметка по recovery (заменяет прежнюю)
 
-Восстановление старого состояния = из нового места вернуть каждый каталог на
-место + вернуть конфиг из `.bak`:
+Восстановление старого состояния = отодвинуть каждый МИГРИРОВАННЫЙ каталог
+(`skills/<d>` — symlink/отрендеренный), из нового места вернуть каждый бэкап
+на место (имя `<d>.pre-migration` переименовывается в `<d>`) + вернуть конфиг
+из `.bak`:
 ```sh
 B=~/.config/opencode/.skills-pre-migration-20261026
-for d in analyzing-opencode-logs basecalc ipmi-ops mellanoX-flash-ops mellanoX-fw-build; do
+for d in analyzing-opencode-logs basecalc ipmi-ops mellanox-flash-ops mellanox-fw-build; do
+  mv ~/.config/opencode/skills/$d ~/.config/opencode/skills/$d.migrated
   mv "$B/$d.pre-migration" ~/.config/opencode/skills/$d
 done
 cp ~/.config/opencode/opencode.jsonc.bak-20261026 ~/.config/opencode/opencode.jsonc
 ```
-(`rm` по-прежнему не используется; после реального rollback мигрированные
-симлинки/отрендеренный ipmi-ops пришлось бы отодвинуть, но это — отдельный
-сценарий, не выполнялся.)
+(`rm` по-прежнему не используется; отодвинутые `<d>.migrated` остаются на
+месте — их удаление за пользователем. Без первого `mv` бэкап вложен внутрь
+существующего `skills/<d>` вместо замены — правка заметки по ревью Task 6.)
