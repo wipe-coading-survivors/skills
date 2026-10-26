@@ -388,7 +388,7 @@ git commit -m "feat: host install — JSONC mcp-config patcher, install.sh (syml
 - [ ] **Step 2: Верификация содержимого (lossless)**
 
 4 скилла без плейсхолдеров: `diff` SKILL.md и .py пофайлово против исходников в `~/.config` (mellanox-flash-ops — только SKILL.md; не скопированные `mcp/`, `SKILL.md-old` — ожидаемо).
-ipmi-ops: рендер с `local.mk` во временный каталог (`mktemp -d`) → `diff` отрендеренного SKILL.md с `~/.config/opencode/skills/ipmi-ops/SKILL.md` → идентично (плейсхолдерный раундтрип lossless).
+ipmi-ops: рендер с `local.mk` во временный каталог (`mktemp -d`) → `diff` отрендеренного SKILL.md с `~/.config/opencode/skills/ipmi-ops/SKILL.md` → разница ТОЛЬКО строки провенанса Task 1 (симметрия с четырьмя остальными скиллами); все IP-строки совпадают, 0 оставшихся `@IPMI_*@` (плейсхолдерный раундтрип lossless). (Пояснение: «идентично» в исходной формулировке противоречило Task 1 step 5 — правка координатора, ратифицирована остановкой implementer'а.)
 
 - [ ] **Step 3: Бэкап + отодвинуть старые каталоги**
 
