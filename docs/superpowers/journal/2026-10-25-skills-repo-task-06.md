@@ -287,3 +287,62 @@ extra-mutation не выполняю — закреплено хранить `.p
 - Доказательство без печати значений: в отрендеренном файле 7 IP-токенов
   (6 уникальных; BMC asr1 ×2 — таблица + примечание), 0 `@IPMI_*@`; каждое
   значение local.mk присутствует (5×1 + 1×2 = 7).
+
+## Фоллоу-ап (по ратификации контроллера): вынос бэкапов из skills/
+
+Concern из DONE_WITH_CONCERNS отработан: `.pre-migration` внутри
+`~/.config/opencode/skills/` давали 5 WARN `duplicate skill name` в каждой
+сессии. Контроллер РАТИФИЦИРОВАЛ вынос бэкапов из сканируемого `skills/`.
+
+```sh
+B=~/.config/opencode/.skills-pre-migration-$(date +%Y%m%d)   # …/.skills-pre-migration-20261026
+mkdir -p "$B"
+for d in analyzing-opencode-logs basecalc ipmi-ops mellanoX-flash-ops mellanoX-fw-build; do
+  mv ~/.config/opencode/skills/$d.pre-migration "$B/"
+done
+```
+(Имена каталогов внутри `$B` сохранены как есть; `rm` не использовался.
+Замечание по исполнению: в цикле два раза опечатался `mellanoX` (капс X)
+вместо `mellanoX` (строчный x) — 3 каталога ушли в цикле, оставшиеся 2
+(`mellanoX-*`) домучены отдельным `for src in skills/*.pre-migration; mv`. Итог
+одинаков: все 5 перенесены.)
+
+Новое место бэкапов: `~/.config/opencode/.skills-pre-migration-20261026/`
+(5 каталогов `<name>.pre-migration`), ВНЕ `skills/`.
+
+Состояние `skills/` после (закреплённый чек — точное):
+- 4 симлинка → `skills/<d>/SKILL.md` репо: analyzing-opencode-logs, basecalc,
+  mellanoX-flash-ops, mellanoX-fw-build;
+- 1 отрендеренный: ipmi-ops (SKILL.md, 6659 b, +`.rendered`);
+- `.pre-migration` в `skills/` — НЕТ;
+- вне скопа, не тронуты: glm-quota, irisc-asm.
+
+Живой чек исчезновения warning (временный каталог `/tmp/ocprobe-UgH4H1`):
+```sh
+opencode run "Перечисли только имена доступных скиллов, без описаний."   # exit 0
+```
+Вывод модели содержит все 5 мигрированных имён (analyzing-opencode-logs,
+basecalc, ipmi-ops, mellanoX-flash-ops, mellanoX-fw-build) + вне-скопные
+glm-quota/irisc-asm + пакетные (superpowers и т.п.).
+
+Лог (ground truth): реальные WARN `duplicate skill name` (фильтр
+`level=WARN … message="duplicate skill name" name=`) — ровно 10, все из
+двух ДО-выноса прогонов (run d7b5416e @08:30:48Z и run 6155b310 @08:40:36Z,
+по 5). После выноса (прогон 08:52:20–08:53:13Z и далее) — НОЛЬ реальных
+WARN. (Ложные совпадения по подстроке — мои собственные bash-echo/grep-строки
+в логе run 6a251e99; они level=INFO и не являются skill-discovery warning.)
+
+### Исправленная заметка по recovery (заменяет прежнюю)
+
+Восстановление старого состояния = из нового места вернуть каждый каталог на
+место + вернуть конфиг из `.bak`:
+```sh
+B=~/.config/opencode/.skills-pre-migration-20261026
+for d in analyzing-opencode-logs basecalc ipmi-ops mellanoX-flash-ops mellanoX-fw-build; do
+  mv "$B/$d.pre-migration" ~/.config/opencode/skills/$d
+done
+cp ~/.config/opencode/opencode.jsonc.bak-20261026 ~/.config/opencode/opencode.jsonc
+```
+(`rm` по-прежнему не используется; после реального rollback мигрированные
+симлинки/отрендеренный ipmi-ops пришлось бы отодвинуть, но это — отдельный
+сценарий, не выполнялся.)
