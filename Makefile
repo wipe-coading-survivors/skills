@@ -15,7 +15,7 @@ build:
 	$(CRE) build -f containerfile -t $(IMAGE) $$CTX
 
 test:
-	node --test "server/test/**/*.test.mjs"
+	node --test "server/test/**/*.test.mjs" "scripts/test/**/*.test.mjs"
 	sh scripts/test-no-sensitive.sh
 	sh scripts/test-render.sh
 
