@@ -140,3 +140,28 @@ pigoky-llama-cpp/default.
   read-only до начала; менять нечего).
 - Sensitive-проверка перед коммитом: `make test` (test-no-sensitive.sh)
   прогоняется после добавления файлов (см. ниже).
+
+Завершение (после основного коммита):
+
+```sh
+git add -A          # ровно 2 файла: acceptance-док + этот журнал
+make test           # с файлами уже в tracked: GATE_EXIT=0 (28/28, pass=7, pass=3)
+git commit -m "docs: record live probe acceptance; mark spec approved"
+# → 6390ab2 (2 files changed, 287 insertions)
+git push            # 8dcb9ca..6390ab2  plan/skills-repo -> plan/skills-repo (exit 0)
+git status          # clean, up to date с origin
+```
+
+Селф-ревью (чек-лист из задания):
+- транскрипт полный: baseline (вопрос + 5 вызовов), G5 (вопрос + вызов + ответ
+  дословно), режим (б) (list_skills дословно, 5 имён) — в доке;
+- вердикт честный: G5 PASS — агент шёл через хостовой skill-тул (а не MCP
+  _docs); закреплённый критерий оба варианта допускает — записано в доке;
+- sensitive: grep по 2 новым файлам (приватные IP-диапазоны, ctx7sk-, Bearer)
+  → только задокументированный маск-плейсхолдер `ctx7sk-****`; no-sensitive
+  гейт с файлами в tracked — pass=7;
+- порт 8080: свободен (connection refused, контейнера нет) — проверено ДО
+  коммита;
+- git: clean + запушено.
+
+Итог: DONE. Все шаги брифа выполнены; G5 PASS; режим (б) PASS; гейты PASS.
