@@ -216,9 +216,11 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
 - Плейсхолдер без значения в `local.mk` (не задана/пустая переменная) —
   ошибка сборки с указанием имени (тихая пустая подстановка запрещена).
 
-**containerfile:** `FROM node:22-alpine` (тег — выбор билдера), COPY
-`server.mjs` + (отрендеренные) каталоги скиллов в `/app`, `WORKDIR /app`,
-`EXPOSE 8080`, `CMD ["node", "server.mjs"]` (stdio-дефолт).
+**containerfile:** `FROM quay.io/fedora/nodejs-22:latest` (Fedora 44 с
+node v22 — решение владельца, 2026-10-26), COPY `server/server.mjs` +
+(отрендеренные) каталоги скиллов в `/app` (раскладка 1:1 с чекаутом),
+`WORKDIR /app`, `EXPOSE 8080`, `CMD ["node", "server/server.mjs"]`
+(stdio-дефолт).
 
 **Makefile:** `CRE ?= podman` с автопереключением на `podman-remote`, если
 существует `/run/.containerenv` (no-cre-hardcode). Цели:

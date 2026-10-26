@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Node ≥ 22 (на хосте v22; образ `FROM node:22-alpine`).
+- Node ≥ 22 (на хосте v22; образ `FROM quay.io/fedora/nodejs-22:latest` — Fedora 44, node v22.23.1; решение владельца 2026-10-26).
 - Ноль npm-зависимостей: только `node:` builtins (fs, path, http, url, test).
 - Имя образа: `skills-mcp:local`; порт 8080 (env `PORT`, `0` = ephemeral + строка `listening on port <n>` в stderr).
 - Env: `MCP_MODE=stdio|http` (дефолт `stdio`); `SKILLS_DIRS` — список путей через `:`; каждый элемент — каталог скилла (содержит SKILL.md) ИЛИ корень с такими каталогами; дефолт — `skills/` рядом с каталогом `server.mjs`.
@@ -253,10 +253,10 @@ Expected: 3 ok, exit 0.
 - [ ] **Step 3: containerfile**
 
 ```
-FROM node:22-alpine
+FROM quay.io/fedora/nodejs-22:latest
 
 WORKDIR /app
-COPY server.mjs server/server.mjs
+COPY server/server.mjs server/server.mjs
 COPY skills/ ./skills/
 
 EXPOSE 8080
@@ -275,6 +275,7 @@ CRE ?= podman-remote
 endif
 -include local.mk
 IMAGE ?= skills-mcp:local
+.PHONY: build test smoke run-http
 
 build:
 	@mkdir -p .build; CTX=$$(mktemp -d .build/ctx-XXXXXX); \
