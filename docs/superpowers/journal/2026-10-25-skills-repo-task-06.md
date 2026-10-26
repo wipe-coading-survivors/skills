@@ -174,3 +174,116 @@ Task-1 provenance-смены» (симметрично правилу для 4 �
 и авторизовать продолжение шагов 3-5. Альтернатива (строгая byte-identity)
 требовала бы отката provenance в skills/ipmi-ops/SKILL.md — противоречит
 одобренному изменению Task 1, нужна явная директива.
+
+## Возобновление: ратификация + шаги 3-5
+
+Контроллер РАТИФИЦИРОВАЛ предложенное ослабление (план закреплён коммитом
+3a56967; бриф регенерирован — step 2 теперь: «разница ТОЛЬКО строки
+провенанса Task 1 (симметрия с четырьмя остальными); все IP-строки совпадают,
+0 оставшихся `@IPMI_*@`»). Моё step-2 доказательство этому уже удовлетворяет.
+Продолжаю с текущего состояния (step 1 done, step 2 verified, до сих пор
+без мутаций хоста).
+
+### Шаг 3: Бэкап + отодвинуть старые каталоги
+
+```sh
+cp ~/.config/opencode/opencode.jsonc ~/.config/opencode/opencode.jsonc.bak-20261026   # exit 0
+for d in analyzing-opencode-logs basecalc ipmi-ops mellanox-flash-ops mellanox-fw-build; do
+  mv ~/.config/opencode/skills/$d ~/.config/opencode/skills/$d.pre-migration
+done
+```
+
+Результат: `opencode.jsonc.bak-20261026` создан (2114 байта); 5 каталогов →
+`<d>.pre-migration`; `glm-quota` и `irisc-asm` (вне скопа) не тронуты.
+
+### Шаг 4: Конфиг — context7 + skills
+
+DRY-проверка экстракции (токен не печатается):
+```
+node -e '…parseJsonc(конфиг)…; e=o.mcp1.context7; delete e.enabled…'
+# mcp1 keys: [ 'context7' ]
+# entry keys after drop: [ 'type', 'url', 'headers' ]
+# type: remote ; url: https://mcp.context7.com/mcp
+# enabled present?: false ; headers.Authorization startsWith "Bearer "?: true
+```
+
+Реальная экстракция entry в переменную (токен остаётся в переменной, в журнал
+НЕ вносится), затем 4 закреплённые команды (CRE=podman-remote — автоопределение):
+```sh
+entry=$(node -e '…delete e.enabled; process.stdout.write(JSON.stringify(e))')   # 135 символов
+node scripts/patch-mcp-config.mjs set    ~/.config/opencode/opencode.jsonc context7 "$entry"   # exit 0
+node scripts/patch-mcp-config.mjs set    ~/.config/opencode/opencode.jsonc skills '{"type":"local","command":["podman-remote","run","--rm","-i","skills-mcp:local"]}'  # exit 0
+node scripts/patch-mcp-config.mjs remove ~/.config/opencode/opencode.jsonc mcp1   # exit 0
+node scripts/patch-mcp-config.mjs remove ~/.config/opencode/opencode.jsonc mcp-mlnx  # exit 0
+```
+В entry `enabled` удалено (было `true`; в современном `mcp.servers` —
+`disabled`, не `enabled`). Токен в команде маскируется: `Bearer ctx7sk-****`.
+
+Ре-парс результата (Review Focus 4):
+```
+node -e '…parseJsonc(новый конфиг)…'
+# RE-PARSE OK
+# top-level keys: $schema, lsp, plugin, provider, mcp
+# mcp.servers keys: context7, skills
+# has mcp1?: false ; has mcp-mlnx?: false
+# context7: type=remote, url=https://mcp.context7.com/mcp, enabled?: false,
+#           headers.Authorization = Bearer ctx7****
+# skills: {"type":"local","command":["podman-remote","run","--rm","-i","skills-mcp:local"]}
+# plugin / provider(pigoky-llama-cpp, local-llama-cpp) / lsp=true — сохранены
+```
+
+Конфиг переведён в современный `mcp.servers.<name>`; невалидные топовые
+`mcp1`/`mcp-mlnx` удалены; остальное (plugin, provider, lsp, $schema) цел.
+
+### Шаг 5: Установка + верификация
+
+```sh
+scripts/install.sh   # exit 0
+# build: skills-mcp:local (cached, 5b37bbb9785d)
+# ipmi-ops rendered: md5 c7fff3c75a166a44f62bd00628b218df  ~/.config/opencode/skills/ipmi-ops/SKILL.md
+# smoke-ok
+# install: done
+```
+
+Состояние после (закреплённые ожидания — все выполнены):
+- 4 симлинка (→ `skills/<d>/SKILL.md` репо): analyzing-opencode-logs, basecalc,
+  mellanoX-flash-ops, mellanoX-fw-build (readlink подтверждён).
+- ipmi-ops: отрендерен (обычный файл, НЕ symlink) + `.rendered` + md5 c7fff3…;
+  0 leftover `@IPMI_*@`.
+- `.pre-migration` ×5 на месте; `glm-quota`/`irisc-asm` не тронуты.
+
+Живые пробы — из временного каталога `/tmp/ocprobe-UgH4H1` (`opencode run`
+неинтерактивен по умолчанию; флаги сверены по `opencode run --help`).
+
+**Проба (a)** «Перечисли доступные скиллы и вызови инструмент list_skills
+MCP-сервера skills, покажи вывод»:
+- `skills_list_skills` вызван → ровно 5 скиллов: analyzing-opencode-logs,
+  basecalc, ipmi-ops, mellanoX-flash-ops, mellanoX-fw-build.
+- Модель дополнительно отметила superpowers/glm-quota/customize-opencode/
+  irisc-asm, но MCP-сервер `skills` отдаёт ровно эти 5.
+
+Ground truth (лог opencode, run d7b5416e) — 5 WARN `duplicate skill name`:
+opencode обнаружил ОБА — мигрированные (symlink/rendered) и `.pre-migration`
+(в них ещё лежат SKILL.md исходников с тем же `name` в frontmatter). Выводы:
+1. **opencode следует симлинкам** (нашёл SKILL.md через symlink) → fallback
+   (Review Focus 3: symlink → копия + md5) **НЕ нужен**.
+2. Все 5 имён в `available_skills` (каждое как existing+duplicate) →
+   закреплённое «все 5 скиллов в available_skills» выполнено.
+
+⚠️ **Concern (побочный эффект закреплённого шага 3):** `.pre-migration` внутри
+`skills/` дают 5 предупреждений о дублях. Разрешение дублей — по порядку
+readdir (стабильно при неизменном каталоге, иначе — нет): в данном прогоне
+basecalc/analyzing-opencode-logs/ipmi-ops → NEW (мигрированное),
+mellanoX-flash-ops/mellanoX-fw-build → OLD (`.pre-migration`). Для mellanoX-*
+OLD == NEW (byte-идентичны, шаг 2) → функционально без разницы. Рекомендация:
+после верификации вынести бэкапы из `skills/` (вне скопа этой задачи;
+extra-mutation не выполняю — закреплено хранить `.pre-migration`).
+
+**Проба (b)** «Вызови инструмент ipmi_ops_docs MCP-сервера skills и покажи
+полный вывод»:
+- `skills_ipmi_ops_docs` вызван → полный отрендеренный SKILL.md с РЕАЛЬНЫМИ IP
+  (таблица 3 хоста × host/BMC + примечание asr1), 0 плейсхолдеров `@IPMI_*@`.
+  IP в журнале маскируются (`10.x.x.x`).
+- Доказательство без печати значений: в отрендеренном файле 7 IP-токенов
+  (6 уникальных; BMC asr1 ×2 — таблица + примечание), 0 `@IPMI_*@`; каждое
+  значение local.mk присутствует (5×1 + 1×2 = 7).
