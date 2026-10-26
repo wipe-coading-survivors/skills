@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Node ≥ 22 (на хосте v22; образ `FROM node:22-alpine`).
+- Node ≥ 22 (на хосте v22; образ `FROM quay.io/fedora/nodejs-22:latest` — Fedora 44, node v22.23.1; решение владельца 2026-10-26).
 - Ноль npm-зависимостей: только `node:` builtins (fs, path, http, url, test).
 - Имя образа: `skills-mcp:local`; порт 8080 (env `PORT`, `0` = ephemeral + строка `listening on port <n>` в stderr).
 - Env: `MCP_MODE=stdio|http` (дефолт `stdio`); `SKILLS_DIRS` — список путей через `:`; каждый элемент — каталог скилла (содержит SKILL.md) ИЛИ корень с такими каталогами; дефолт — `skills/` рядом с каталогом `server.mjs`.
@@ -22,6 +22,7 @@
 - Имена переменных ipmi-ops (закреплено): `IPMI_MELLANOX_HOST`, `IPMI_MELLANOX_BMC`, `IPMI_BAZZITE_HOST`, `IPMI_BAZZITE_BMC`, `IPMI_ASR1_HOST`, `IPMI_ASR1_BMC` (маппинг на столбцы таблицы — по её заголовкам).
 - CRE: `podman`, при существовании `/run/.containerenv` — `podman-remote` (авто в Makefile и install.sh; хардкод запрещён).
 - Коммиты — на английском; в containerfile нет завершающих (inline) комментариев; rm в скриптах репо не используется; `make test` включает `scripts/test-no-sensitive.sh` и обязан проходить на каждом коммите (для коммитов Tasks 1–3, где Makefile ещё нет, — его компоненты: `sh scripts/test-no-sensitive.sh` + `node --test` существующих тестов).
+- Гейт `node --test` — glob-форма `node --test "<dir>/**/*.test.mjs"` (Node 22: позиционные аргументы — glob-паттерны, голая директория не разворачивается в тесты).
 - Формат opencode-конфига: современный `mcp.servers.<имя>` (local: `type`+`command`; remote: `type`+`url`+`headers`).
 
 ## Review Focus
@@ -70,6 +71,7 @@ cp ~/.config/opencode/skills/mellanox-flash-ops/mcp/server.mjs \
 ```
 local.mk
 .build/
+.superpowers/
 ```
 
 - [ ] **Step 4: AGENTS.md**
@@ -129,14 +131,14 @@ Expected: FAIL (модуль `server.mjs` не найден).
 
 - [ ] **Step 3: Реализовать parseFrontmatter, discoverSkills, defaultSkillsDir**
 
-`server.mjs` (ESM). Frontmatter: блок между первой `---` и следующей `---`, пары `key: value`. Discovery: entry с SKILL.md → скилл; иначе — подкаталоги с SKILL.md; иначе skip + stderr. `defaultSkillsDir` = `join(dirname(fileURLToPath(import.meta.url)), "skills")`.
+`server.mjs` (ESM). Frontmatter: блок между первой `---` и следующей `---`, пары `key: value`. Discovery: entry с SKILL.md → скилл; иначе — подкаталоги с SKILL.md; иначе skip + stderr. `defaultSkillsDir` = `resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills")` (соседский `skills/` к каталогу server.mjs — работает и в чекауте репо, и в образе, т.к. containerfile кладёт server.mjs в `server/`).
 
 - [ ] **Step 4: Failing-тест tools**
 
 `server/test/tools.test.mjs` (assertions закреплёны):
 - `discoverSkills([fixtures/skills])` → ровно 2 скилла (alpha, beta); `alpha.files` содержит `tool.txt`.
 - `discoverSkills([fixtures/skills/alpha, fixtures/skills/beta])` (entry = сами каталоги скиллов) → 2 скилла.
-- `defaultSkillsDir()` → `join(dirname(<каталог server.mjs>), "skills")`.
+- `defaultSkillsDir()` → `resolve(join(dirname(<каталог server.mjs>), "..", "skills"))` (в репо — `<repo>/skills`).
 - `buildTools` → имена: `list_skills`, `alpha_docs`, `beta_docs`, `skill_file`.
 - `initialize` с `protocolVersion "2025-03-26"` → эхо + `serverInfo.name === "skills"`.
 - `tools/call alpha_docs` без args → полный файл (`## One` и `name: alpha`).
@@ -166,7 +168,7 @@ Expected: PASS.
 
 Main-guard: `if (import.meta.url === pathToFileURL(process.argv[1]).href) main()`.
 
-Run: `node --test server/test`
+Run: `node --test "server/test/**/*.test.mjs"`
 Expected: PASS (3 файла).
 
 - [ ] **Step 8: Commit**
@@ -194,6 +196,7 @@ git commit -m "feat: MCP server core — skill discovery, tools, stdio transport
 - `POST /mcp` с `notifications/initialized` (без `id`) → 202, пустое тело.
 - `GET /healthz` → 200.
 - `GET /mcp` → 200, content-type начинается с `text/event-stream`.
+- `defaultSkillsDir`-зависимостей в этом тесте нет (spawn с явным `SKILLS_DIRS`).
 
 - [ ] **Step 2: Run — FAIL**
 
@@ -206,7 +209,7 @@ Expected: FAIL (нет http-ветки; процесс уходит в stdio-р�
 
 - [ ] **Step 4: Run — PASS**
 
-Run: `node --test server/test`
+Run: `node --test "server/test/**/*.test.mjs"`
 Expected: PASS (4 файла).
 
 - [ ] **Step 5: Commit**
@@ -250,15 +253,17 @@ Expected: 3 ok, exit 0.
 - [ ] **Step 3: containerfile**
 
 ```
-FROM node:22-alpine
+FROM quay.io/fedora/nodejs-22:latest
 
 WORKDIR /app
-COPY server.mjs .
+COPY server/server.mjs server/server.mjs
 COPY skills/ ./skills/
 
 EXPOSE 8080
-CMD ["node", "server.mjs"]
+CMD ["node", "server/server.mjs"]
 ```
+
+(Раскладка 1:1 с чекаутом репо: server.mjs в `server/`, `skills/` соседний — дефолт `defaultSkillsDir` (соседский) работает в образе без `SKILLS_DIRS`.)
 
 - [ ] **Step 4: Makefile**
 
@@ -270,15 +275,16 @@ CRE ?= podman-remote
 endif
 -include local.mk
 IMAGE ?= skills-mcp:local
+.PHONY: build test smoke run-http
 
 build:
 	@mkdir -p .build; CTX=$$(mktemp -d .build/ctx-XXXXXX); \
 	scripts/render.sh skills $$CTX/skills && \
-	cp server/server.mjs $$CTX/server.mjs && \
+	mkdir -p $$CTX/server && cp server/server.mjs $$CTX/server/server.mjs && \
 	$(CRE) build -f containerfile -t $(IMAGE) $$CTX
 
 test:
-	node --test server/test
+	node --test "server/test/**/*.test.mjs"
 	sh scripts/test-no-sensitive.sh
 	sh scripts/test-render.sh
 
@@ -286,7 +292,7 @@ smoke: build
 	@OUT=$$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | $(CRE) run --rm -i $(IMAGE)); \
 	echo "$$OUT" | grep -q '"name":"skills"' && \
 	echo "$$OUT" | grep -q 'list_skills' && \
-	echo "$$OUT" | grep -q 'mellanox_flash_docs' && echo smoke-ok
+	echo "$$OUT" | grep -q 'mellanox_flash_ops_docs' && echo smoke-ok
 
 run-http: build
 	$(CRE) run --rm -p 8080:8080 -e MCP_MODE=http $(IMAGE)
@@ -346,7 +352,7 @@ Expected: PASS.
 
 POSIX sh, запуск из корня репо; шаги (закреплено):
 1. Проверки: node, git, CRE-авто (логика как в Makefile), `local.mk`, существование `$HOME/.config/opencode/opencode.jsonc`; `make build`.
-2. Для каждого каталога в `skills/`: `mkdir -p` target `$HOME/.config/opencode/skills/<имя>`; если `target/SKILL.md` существует как обычный файл без маркера `.rendered`, а в скилле нет плейсхолдеров → abort с подсказкой про одноразовую миграцию (до-миграционное состояние). Скилл с плейсхолдерами: `tmp=$(mktemp -d); cp -a skills/<имя> $tmp/skills/<имя>; scripts/render.sh $tmp/skills $tmp/out`; затем `cp $tmp/out/<имя>/SKILL.md target/`, `touch target/.rendered`, вывести md5. Иначе: `ln -sf <репо>/skills/<имя>/SKILL.md target/SKILL.md`.
+2. Для каждого каталога в `skills/`: `mkdir -p` target `$HOME/.config/opencode/skills/<имя>`; если `target/SKILL.md` существует как обычный файл без маркера `.rendered`, а в скилле нет плейсхолдеров → abort с подсказкой про одноразовую миграцию (до-миграционное состояние). Скилл с плейсхолдерами: `tmp=$(mktemp -d); mkdir -p $tmp/skills; cp -a skills/<имя> $tmp/skills/<имя>; scripts/render.sh $tmp/skills $tmp/out`; затем **stage+rename**: `cp $tmp/out/<имя>/SKILL.md target/SKILL.md.new && mv target/SKILL.md.new target/SKILL.md` (rename заменяет сам symlink и не пишет через него в tracked-файл репо; `cp … target/` напрямую запрещён — clobber-сценарий из ревью Task 5), `touch target/.rendered`, вывести md5. Иначе: `ln -sf <репо>/skills/<имя>/SKILL.md target/SKILL.md`. CRE — как в Makefile, `?=`-семантика: экспортированный `CRE` уважаётся, иначе автоопределение.
 3. `node scripts/patch-mcp-config.mjs set <config> skills '<entry>'` — entry: local `{"type":"local","command":["<CRE>","run","--rm","-i","skills-mcp:local"]}` либо remote `{"type":"remote","url":"$SKILLS_MCP_URL"}` (если задан).
 4. `make smoke`.
 
@@ -355,7 +361,7 @@ Expected: синтаксис ок. (Живой прогон — Task 6.)
 
 - [ ] **Step 4: Расширить test-таргет + make test + commit**
 
-Makefile: в цели `test` строку `node --test server/test` заменить на `node --test server/test scripts/test`.
+Makefile: в цели `test` строку `node --test "server/test/**/*.test.mjs"` заменить на `node --test "server/test/**/*.test.mjs" "scripts/test/**/*.test.mjs"`.
 
 Run: `make test`
 Expected: PASS (node --test теперь включает `scripts/test`).
@@ -382,7 +388,7 @@ git commit -m "feat: host install — JSONC mcp-config patcher, install.sh (syml
 - [ ] **Step 2: Верификация содержимого (lossless)**
 
 4 скилла без плейсхолдеров: `diff` SKILL.md и .py пофайлово против исходников в `~/.config` (mellanox-flash-ops — только SKILL.md; не скопированные `mcp/`, `SKILL.md-old` — ожидаемо).
-ipmi-ops: рендер с `local.mk` во временный каталог (`mktemp -d`) → `diff` отрендеренного SKILL.md с `~/.config/opencode/skills/ipmi-ops/SKILL.md` → идентично (плейсхолдерный раундтрип lossless).
+ipmi-ops: рендер с `local.mk` во временный каталог (`mktemp -d`) → `diff` отрендеренного SKILL.md с `~/.config/opencode/skills/ipmi-ops/SKILL.md` → разница ТОЛЬКО строки провенанса Task 1 (симметрия с четырьмя остальными скиллами); все IP-строки совпадают, 0 оставшихся `@IPMI_*@` (плейсхолдерный раундтрип lossless). (Пояснение: «идентично» в исходной формулировке противоречило Task 1 step 5 — правка координатора, ратифицирована остановкой implementer'а.)
 
 - [ ] **Step 3: Бэкап + отодвинуть старые каталоги**
 
@@ -435,7 +441,7 @@ Expected: вывод содержит все 5 имён скиллов. Убит
 - [ ] **Step 3: Живой проб G5 (Review Focus 2)**
 
 Свежая сессия (интерактивная или `opencode run`). Предварительно убедиться, что context7 активен: вопросом по общей (немелланоксовой) теме проверить, что агент вызывает инструмент context7. Вопрос проба (закреплён): «Какой командой сделать ri-дамп прошивки на root-mellanox? Покажи только команду, ничего не выполняй.»
-Проход: агент консультирует `mellanox_flash_docs` (или скилл mellanox-flash-ops) до ответа; в ответе — `mstflint`; нет `flint`/`mlxconfig`/`mlxlink` в качестве первичных, нет `/dev/mst`.
+Проход: агент консультирует `mellanox_flash_ops_docs` (или скилл mellanox-flash-ops) до ответа; в ответе — `mstflint`; нет `flint`/`mlxconfig`/`mlxlink` в качестве первичных, нет `/dev/mst`.
 Провал: доложить владельцу, поправить формулировки tool description, повторить проб (малый скоуп).
 Транскрипт → `docs/acceptance/2026-10-25-live-probe.md` (вопрос, вызовы инструментов, ответ, вердикт).
 

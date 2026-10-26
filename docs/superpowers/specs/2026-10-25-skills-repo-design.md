@@ -139,18 +139,20 @@ Anti-goals (условие провала):
 ```
 
 Каталоги скиллов — в подкаталоге `skills/` репо (решение владельца:
-монтировать один каталог в контейнер проще). В образе: `server.mjs` →
-`/app/server.mjs`, `skills/` → `/app/skills/` — дефолт сканирования
-работает и в образе, и в чекауте; монтаж `<repo>/skills` → `/app/skills` —
-один том.
+монтировать один каталог в контейнер проще). Раскладка образа 1:1 с
+чекаутом: `server/server.mjs` → `/app/server/server.mjs`, `skills/` →
+`/app/skills/` — дефолт сканирования (соседский `skills/` к каталогу
+server.mjs) работает и в образе, и в чекауте; монтаж `<repo>/skills` →
+`/app/skills` — один том.
 
 ## 5. Спецификация MCP-сервера
 
 **Обнаружение:**
 
-- `SKILLS_DIRS` (env, список путей через `:`) или аргумент CLI; по
-  умолчанию — подкаталог `skills/` рядом с каталогом, где лежит
-  `server.mjs` (в образе: `/app/skills`; в чекауте: `<repo>/skills`).
+- `SKILLS_DIRS` (env, список путей через `:`); по умолчанию — подкаталог
+  `skills/` рядом с каталогом, где лежит `server.mjs` (в образе:
+  `/app/skills`; в чекауте: `<repo>/skills`). (CLI-аргумент не
+  реализован: план сузил до env.)
 - Каталог — скилл, если содержит `SKILL.md`; иначе — пропуск + предупреждение
   в stderr.
 - Frontmatter `SKILL.md` (`name`, `description`) парсится для описаний.
@@ -159,7 +161,7 @@ Anti-goals (условие провала):
 
 - `list_skills` — таблица: имя, однострочное описание, список файлов.
 - `<скилл>_docs` на каждый скилл (имя каталога, `-`→`_`; например
-  `mellanox_flash_docs`): опциональный аргумент `section` —
+  `mellanox_flash_ops_docs`): опциональный аргумент `section` —
   case-insensitive substring в заголовках `## ` (как в прототипе); без
   аргумента — весь текст; при промахе — ошибка со списком доступных
   секций.
@@ -216,9 +218,11 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
 - Плейсхолдер без значения в `local.mk` (не задана/пустая переменная) —
   ошибка сборки с указанием имени (тихая пустая подстановка запрещена).
 
-**containerfile:** `FROM node:22-alpine` (тег — выбор билдера), COPY
-`server.mjs` + (отрендеренные) каталоги скиллов в `/app`, `WORKDIR /app`,
-`EXPOSE 8080`, `CMD ["node", "server.mjs"]` (stdio-дефолт).
+**containerfile:** `FROM quay.io/fedora/nodejs-22:latest` (Fedora 44 с
+node v22 — решение владельца, 2026-10-26), COPY `server/server.mjs` +
+(отрендеренные) каталоги скиллов в `/app` (раскладка 1:1 с чекаутом),
+`WORKDIR /app`, `EXPOSE 8080`, `CMD ["node", "server/server.mjs"]`
+(stdio-дефолт).
 
 **Makefile:** `CRE ?= podman` с автопереключением на `podman-remote`, если
 существует `/run/.containerenv` (no-cre-hardcode). Цели:
@@ -313,14 +317,14 @@ node:url). Прототип (`mellanox-flash-ops/mcp/server.mjs`, ~140 стро�
     частные IP-диапазоны не встречаются в tracked-файлах (часть `make test`).
 - `make smoke` — живой контейнер (stdio-хендшейк).
 - В живой opencode-сессии: все пять скиллов в `available_skills`,
-  инструменты сервера отвечают, `mellanox_flash_docs` отдаёт отрендеренный
+  инструменты сервера отвечают, `mellanox_flash_ops_docs` отдаёт отрендеренный
   текст; context7 активен.
 - CI нет (лабораторное репо).
 
 **9.2 Живой проб G5** (принято координатором): новая opencode-сессия,
 context7 включён, реальный mstflint-вопрос (напр. «сделай ri-дамп прошивки
 на root-mellanox»). Проход: агент консультирует наши инструменты
-(`mellanox_flash_docs` и/или скилл) и не следует MLNX_OFED/legacy-докам
+(`mellanox_flash_ops_docs` и/или скилл) и не следует MLNX_OFED/legacy-докам
 (нет `/dev/mst`, нет `flint`/`mlxconfig`/`mlxlink` как первичных).
 Провал: доложить владельцу, крутить формулировки description (допустимо,
 малый скоуп); цикл не считается провалившимся автоматически.
