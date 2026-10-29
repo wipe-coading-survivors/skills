@@ -79,8 +79,8 @@ ssh <host> 'ps -p <PID> || echo mstflint-exited; tail -c 400 /root/x.log | tr "\
 
 ## Scope: verify, don't forensics
 
-After a dump verify ONLY: process exited, file size, md5 (burn: the two OK
-markers). Do NOT decode dump CONTENTS — why `ri` ≠ `rb`, slot layouts,
+After a dump verify ONLY: process exited, file size, md5 (burn:
+`Restoring signature - OK` + zero `-E-` lines). Do NOT decode dump CONTENTS — why `ri` ≠ `rb`, slot layouts,
 FF/zero zones, ITOC sections: every subagent that starts this spends ~20
 min and lands on "separate research task". Record the facts (sizes, md5,
 "differ from offset N, N bytes") and stop. Same for a FAILED burn: record

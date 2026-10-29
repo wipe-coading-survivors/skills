@@ -83,10 +83,11 @@ tail -c 800 /tmp/sol.log | cat -v | tr '\r' '\n' | tail -15
 - Power off/cycle kills SOL (`SOL session closed by BMC`) — expected; after
   `power on` launch the bridge again. Never reuse a pre-reboot session.
 - `SOL payload already active on another session` (dead ipmitool holds the
-  payload): `pkill -x ipmitool` → `… sol deactivate`; if it persists —
-  `… mc reset warm` (BMC ~1 min, host untouched).
-  **Never `pkill -f <pattern>`** — the pattern matches your own shell's command
-  line and kills it.
+  payload): find its PID (`ps -ef | grep ipmitoo[l]`) → `kill <PID>` →
+  `… sol deactivate`; if it persists — `… mc reset warm` (BMC ~1 min,
+  host untouched).
+  **Never pgrep/pkill** — `pkill -f <pattern>` matches your own shell's
+  command line and kills it; PID + kill (unix-process-ops).
 - asr1 (@IPMI_ASR1_BMC@): F2 spam at POST (window ~2–3 s), send arrow keys with
   ≥0.4 s gaps; Console Redirection [Disabled] in the BMC mutes SOL input
   entirely.
@@ -135,7 +136,8 @@ ONE command with the loop inside (per-poll tool calls — 20–30 round trips
 - Tool timeout lower than the inner loop — the loop dies, state unknown.
 - Foreground `ipmitool sol activate` / redirects — bridge only.
 - `cat`/`tail -f` on the SOL log — raw bytes and `\r` flood the context.
-- `pkill -f ipmitool` — use `pkill -x ipmitool`.
+- `pkill -f` / `pkill -x ipmitool` — find the PID (`ps -ef | grep
+  ipmitoo[l]`) and kill by PID (unix-process-ops).
 - Reusing an old SOL session after a power cycle — relaunch the bridge.
 - Waiting for output on an idle console — send Enter.
 - Skipping `sol deactivate` after killing the bridge — zombie payload later.

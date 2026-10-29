@@ -10,7 +10,7 @@ domain skills (mellanox-flash-ops, ipmi-ops) reference this skill for the
 mechanics; domain semantics (what to do when a process dies, what a log
 line means, flash-semaphore consequences) stay there.
 
-## Rule 1 — NEVER pgrep/pkill (especially -f)
+## Rule 1 — NEVER pgrep -f / pkill -f
 
 `pkill -f <pattern>` / `pgrep -f <pattern>` match your OWN ssh session's
 command line — the pattern text is literally in it — and kill your own
@@ -19,9 +19,10 @@ cycle): `pkill -9 -f mstfwreset` killed the ssh session before `reboot`;
 the reboot never ran, the target processes were dead anyway.
 
 - First choice: work by PID (Rule 2) — no process matching at all.
-- No PID (someone else's process)? Match by name with the BRACKET trick:
-  `ps -ef | grep mstfwrese[t]` — the bracket keeps the grep's own command
-  line out of the match.
+- No PID (someone else's process)? Find it by name with the BRACKET
+  trick: `ps -ef | grep mstfwrese[t]` — the bracket keeps the grep's own
+  command line out of the match — then kill by PID (Rule 5). No pgrep,
+  no pkill, in any form.
 
 ## Rule 2 — Capture the PID at launch ($!)
 
