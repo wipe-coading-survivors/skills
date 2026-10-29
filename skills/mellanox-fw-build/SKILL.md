@@ -1,6 +1,6 @@
 ---
 name: mellanox-fw-build
-description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, recomputing the 0xA0 digest (mlxini.py sign / sign --check) before a plain burn, or running offline image verify gates (mlxini, mstflint -i verify).
+description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, recomputing the 0xA0 digest (mlxini.py sign / sign --check) before a plain burn, building self-signed secure-fw images (own key vault 0xA4 + RSA-4096 SignForFwUpdate), or running offline image verify gates (mlxini, mstflint -i verify).
 ---
 
 # Mellanox custom FW build (offline, before any burn)
@@ -101,6 +101,51 @@ cycle.
   out of scope.
 - `--no_fw_ctrl` burn (direct path) does NOT check the digest — the
   recompute is not needed there (still harmless; keep the default).
+- Self-signed (RSA-path, Rule 6) images: do NOT run `mlxini.py sign` /
+  `mstflint sign` on them — it would overwrite 0xA0 and zero the uuid
+  fields, destroying the RSA signature. `sign --check` rc 2
+  (`0xA0: empty`) is the expected, correct state for Rule-6 builds.
+
+## Rule 6 — Self-signed secure-fw build (own vault + RSA-4096)
+
+Live-proven path (2026-10-29, securefw-gates cycle; RE map, recipes and
+md5 tables — mlxini `docs/21`, chronicle `docs/20` §14.6). For secure
+cards (`q` → `Security Attributes: secure-fw`) the burn-verify gate
+resolves the image's 0xA3 `keypair_uuid` against the RUNNING image's key
+vault (16 slots: 0xA1×8 + 0xA4×8). A self-signed image therefore passes
+only after OUR vault is running: first install via FNP
+(mellanox-flash-ops + docs/40 §6/§9.1), then every later own build goes
+plain `-y burn` ("FNP once → plain onwards").
+
+Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
+
+1. Key: RSA-4096 PEM (`openssl genrsa 4096`); never commit or quote the
+   private key. uuid = 16 random bytes, passed as a 32-hex-digit STRING.
+2. Vault file = exactly the 0xA4 section size (CX-5 HPE: 4352B = 8 slots
+   × 0x220). Slot layout (BE): auth_cfg @0x0, reserved zeros @0x4..0xC,
+   exp (65537) @0xC, keypair_uuid 16B @0x10, modulus 512B @0x20.
+   Slot plan: own key = slot0 (vendor auth profile `0xd8000004`; the
+   minimal `0x80000004` passes verify too — FW checks only auth_type
+   ∈ {3,4}), vendor slots copied byte-identical from the base 0xA4 into
+   slot1/slot2 (keeps the path back to vendor-signed images).
+3. `mstflint -i <img> set_public_keys <vault.bin>` (the "run sign
+   command" warning is expected) — THEN
+   `mstflint -i <img> --private_key k.pem --key_uuid <32-hex-string> sign`
+   (RSA-4096 → SHA-512, `SignForFwUpdate`). Any vault change after signing
+   invalidates the signature — redo both steps.
+4. Expected post-state: 0xA0 zeroed (SHA-512 branch of SignForFwUpdate
+   zeroes the lower signature section), 0xA3 = own keypair_uuid @0x10 +
+   512B signature @0x20. Diff vs base: only {0xA0, 0xA3, 0xA4, 0x30}.
+5. Freshness proof = the parity gate (NOT Rule 5): recompute EM =
+   sig^65537 mod n → PKCS#1 v1.5 header 00 01 FF…00 + DigestInfo(SHA-512)
+   + SHA512(masked image) == embedded hash; masks = boot magic 16B +
+   ITOC-entry+data of 0xA0 and 0xA3 → 0xFF, range [0, sizeOfImgData).
+   Reference implementation: mlxini `scripts/secfw/parity_gate.py`.
+6. Gates before handoff: Rule 4 items 1-4 (`verify --deep` PASS,
+   `mstflint -i <img> verify` bootable, 0x30 checks, diff whitelist) +
+   the parity gate. Burn handoff: docs/40 §6 (secure) — FNP first
+   install, plain afterwards; GUID/MAC embedding (Rule 3) is mandatory
+   for the FNP leg (`--ignore_dev_data` takes identity from the image).
 
 ## Mini-pipeline (generic)
 
@@ -117,7 +162,11 @@ cycle.
 9. Recompute the 0xA0 digest — `mlxini.py sign <img>` (Rule 5; default
    for every content-modified build).
 10. Offline gates (Rule 4), incl. `sign --check` rc 0.
-11. Hand off to burn: mellanox-flash-ops + docs/40 §6.
+11. Secure card + own signature: Rule 6 instead of step 9 (vault +
+    set_public_keys → sign + parity gate); hand off to burn — FNP once
+    to install the vault, plain afterwards (docs/40 §6, mlxini docs/21
+    §10).
+12. Hand off to burn: mellanox-flash-ops + docs/40 §6.
 
 ## Common mistakes
 
@@ -133,3 +182,12 @@ cycle.
 - Trimming key=value lines "because FW does not read 0x30 anyway" —
   kills `dc`-parity and the reference value.
 - Skipping the round-trip / address check after injection.
+- `--key_uuid <raw-16B-file>` — the option takes a 32-hex-digit STRING
+  (extractUUIDFromString, fs3_ops.cpp:3133); a raw file fails with the
+  masking errmsg "Failed to insert secured FW signature".
+- `mstflint -i <ss-img> sign` (no keys) on a self-signed image —
+  overwrites 0xA0 and zeroes the uuid fields, destroying the RSA
+  signature (Rule 6 builds: parity gate, not Rule 5).
+- set_public_keys AFTER sign, or a vault edit after signing — 0xA4 is
+  inside the signed data; always vault first, sign last, redo both on
+  any vault change.
