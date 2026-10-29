@@ -23,7 +23,8 @@ smoke: build
 	@OUT=$$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | $(CRE) run --rm -i $(IMAGE)); \
 	echo "$$OUT" | grep -q '"name":"skills"' && \
 	echo "$$OUT" | grep -q 'list_skills' && \
-	echo "$$OUT" | grep -q 'mellanox_flash_ops_docs' && echo smoke-ok
+	echo "$$OUT" | grep -q 'mellanox_flash_ops_docs' && \
+	echo "$$OUT" | grep -q 'unix_process_ops_docs' && echo smoke-ok
 
 run-http: build
 	$(CRE) run --rm -p 8080:8080 -e MCP_MODE=http $(IMAGE)
