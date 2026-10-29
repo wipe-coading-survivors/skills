@@ -99,9 +99,9 @@ tail -c 800 /tmp/sol.log | cat -v | tr '\r' '\n' | tail -15
 off and be powered on through the BMC — plain `reboot`/`shutdown -r` (warm,
 no BMC power on) is NOT this flow.
 
-Waiting is ONE command with the loop inside. Per-poll tool calls (20–30
-round trips) flood the context. The tool-call timeout must be HIGHER than the
-inner `timeout N`, or the tool kills the loop.
+Waiting — the ssh-reachability loops from the **unix-process-ops** skill:
+ONE command with the loop inside (per-poll tool calls — 20–30 round trips
+— flood the context), tool-call timeout HIGHER than the inner `timeout N`.
 
 1. State: `… power status` + ssh probe
    `ssh -o BatchMode=yes -o ConnectTimeout=5 <host> true`.
@@ -113,21 +113,17 @@ inner `timeout N`, or the tool kills the loop.
    shutdown does; if the tool call itself times out, that is NOT a failure —
    the shutdown continues in the background, the loop in step 3 is the gate).
    Then step 3.
-3. Wait for shutdown (rc 0 = down, rc 124 = still up):
-   ```sh
-   timeout 120 bash -c 'while ssh -o BatchMode=yes -o ConnectTimeout=5 <host> true 2>/dev/null; do sleep 5; done'; echo rc=$?
-   ```
-   rc 124 → hard `… power off` → step 4.
+3. Wait for shutdown — the unix-process-ops ssh-reachability loop,
+   shutdown variant (inner `timeout 120`, 5 s poll): rc 0 = down,
+   rc 124 = still up → hard `… power off` → step 4.
 3b. ssh dead, power on → hard `… power off` → step 4.
 4. Confirm: `… power status` → `off` (after a hard off: sleep 5, re-check).
 5. `… power on`.
-6. Wait for boot (rc 0 = up, rc 124 = timeout):
-   ```sh
-   timeout 300 bash -c 'while ! ssh -o BatchMode=yes -o ConnectTimeout=5 <host> true 2>/dev/null; do sleep 10; done'; echo rc=$?
-   ```
-   rc 0 → final check `ssh <host> uptime`.
-   rc 124 → diagnose and report WHERE it stuck: `… power status` + SOL log
-   tail (if a bridge was launched: POST? login prompt? no network?).
+6. Wait for boot — the unix-process-ops ssh-reachability loop, boot
+   variant (inner `timeout 300`, 10 s poll): rc 0 = up → final check
+   `ssh <host> uptime`; rc 124 = timeout → diagnose and report WHERE it
+   stuck: `… power status` + SOL log tail (if a bridge was launched:
+   POST? login prompt? no network?).
 
 ## Common mistakes
 

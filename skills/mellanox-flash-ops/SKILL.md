@@ -1,6 +1,6 @@
 ---
 name: mellanox-flash-ops
-description: Use when running mstflint flash operations (ri/rb dumps, dc, q, burn, activating the new FW after burn via mstfwreset) on Mellanox/ConnectX cards over ssh — long-running flash ops, "Flash semaphore" errors, flint_oem write-protect, hosts without mst service (root-mellanox, root-bazzite), burn flag/mode selection for modified images ("The Digest in the signature is wrong", --no_fw_ctrl vs --nofs/-ocr legacy).
+description: Use when running mstflint flash operations (ri/rb dumps, dc, q, burn, activating the new FW after burn via mstfwreset) on Mellanox/ConnectX cards over ssh — long-running flash ops, "Flash semaphore" errors, flint_oem write-protect, hosts without mst service (root-mellanox, root-bazzite), burn mode selection for modified images (plain burn vs --no_fw_ctrl, "The Digest in the signature is wrong" MCC 0x2, pre-burn digest check, --nofs/-ocr legacy).
 ---
 
 # Mellanox flash ops (mstflint over ssh)
@@ -47,24 +47,32 @@ ssh <host> 'nohup mstflint -d <BDF> ri /root/x.bin >/root/x.log 2>&1 & echo "PID
 
 Wait — ONE tool call, the loop INSIDE the command on the remote side (NOT
 20 s polls one by one — dozens of round-trips flood the context). The loop
-has its own 600 s timeout; the state check ALWAYS runs after it:
+has its own 600 s timeout; the state check ALWAYS runs after it. Use the
+PID captured at launch ($!) — no name matching at all:
 
 ```sh
-timeout 600 bash -c 'ssh <host> "until ! ps -ef | grep mstflin[t] >/dev/null; do sleep 10; done"; echo $?'
-ssh <host> 'ps -ef | grep mstflin[t] || echo mstflint-exited; tail -c 400 /root/x.log | tr "\r" "\n" | tail -5; stat -c %s /root/x.bin 2>/dev/null || echo no-file'
+timeout 600 bash -c 'ssh <host> "while ps -p <PID> >/dev/null 2>&1; do sleep 10; done"; echo $?'
+ssh <host> 'ps -p <PID> || echo mstflint-exited; tail -c 400 /root/x.log | tr "\r" "\n" | tail -5; stat -c %s /root/x.bin 2>/dev/null || echo no-file'
 ```
 
-- `mstflin[t]` — the bracket keeps the loop's own wrapper out of the match;
-  do NOT use pgrep. rc: 0 = mstflint exited, 124 = 600 s passed;
-  re-loop if still running.
+- rc: 0 = mstflint exited, 124 = 600 s passed; re-loop if still running.
+- No PID (a process not launched by you)? Bracket trick
+  `ps -ef | grep mstflin[t]` (the bracket keeps the wrapper out of the
+  match). NEVER pgrep/pkill — `pkill -f` matches your own ssh session's
+  command line and kills your shell (live incident: `pkill -9 -f
+  mstfwreset` killed the ssh session before `reboot`). Process/host-ops
+  canon (launch/$!, wait loops, kill, ssh-reachability waits): skill
+  **unix-process-ops**.
 - Tool-call timeout ABOVE 600 s (opencode: `timeout: 660000` ms) — the tool
   must not kill the loop before its own `timeout 600`.
 - Other work in flight? One-shot probe between your steps instead:
-  `sleep 20; ssh <host> 'ps -ef | grep mstflin[t] || echo exited; tail -c 400 /root/x.log | tr "\r" "\n" | tail -5'`
+  `sleep 20; ssh <host> 'ps -p <PID> || echo exited; tail -c 400 /root/x.log | tr "\r" "\n" | tail -5'`
 - burn writes `\r` progress on one line — `tail -c N | tr '\r' '\n'`, never
-  `cat`/`tail -f`. Done ONLY at `Burning FW image without signatures - OK`
-  AND `Restoring signature - OK` (both mandatory); errors:
-  `grep -cE "^-E-" log`.
+  `cat`/`tail -f`. Done ONLY at `Restoring signature - OK` + zero `-E-`
+  lines (`grep -cE "^-E-" log`). `Burning FW image without signatures - OK`
+  is the `--no_fw_ctrl`-path marker — absent in plain burn; both paths
+  must reach `Restoring signature - OK` or the flash is left unfinalized
+  (docs/40 §6).
 - ri/rb done = process exited + file the expected size (table above).
 - New FW becomes active after a CHIP reset — `mstfwreset` (~10–20 s, host
   stays up): the "Activate after burn" section.
@@ -81,23 +89,60 @@ the exact `-E-` line + post-failure `q` (liveness) and report — root-causing
 
 ## Burn mode (choose FIRST — from THIS skill, never from journals/precedents)
 
+Card security class first: `mstflint -d <BDF> q` → `Security Attributes:`
+— `N/A` = non-secure (this skill's territory). `secure-fw`/`signed-fw` =
+secure card — different write-path physics, NO canon in this skill: plain
+burn → `Rejected authentication` (0x5), `--no_fw_ctrl` →
+`MFE_NO_FLASH_DETECTED` (direct SPI blocked); the write paths (self-signed
+vector, FNP) are research territory — docs/20 §14-15.
+
 | Situation | Mode |
 |---|---|
-| Live card + content-modified image (stock + patches, signatures untouched — every custom lab build) | **`--no_fw_ctrl`** — canonical, first and only choice |
+| Live card + content-modified image (stock + patches, signatures untouched — every custom lab build), non-secure card | **plain `-y burn`** — canonical; pre-burn digest check below (mandatory) |
 | FNP recovery / cross-PSID | legacy flags (`--nofs`, `--ignore_dev_data`, `-ocr`, `-apc`) — docs/40 §6 |
 
 ```sh
-mstflint -d <BDF> -i <img.bin> --no_fw_ctrl -y burn
+mstflint -d <BDF> -i <img.bin> -y burn
 ```
 
-- Plain/MCC burn on a content-modified image **fails deterministically**:
+- Plain/MCC burn on a content-modified image with a **stale 0xA0 digest**
+  fails deterministically after the full download:
   `-E- Burning FS4 image failed: The Digest in the signature is wrong`
-  (docs/93 §7). That error means `--no_fw_ctrl` was the mode — do NOT retry
-  plain, do NOT "escalate" to FNP-flags: an extra flash cycle for nothing.
+  (MCC 0x2 — the FW content-digest gate, docs/20 §14.5). The pre-burn check
+  below exists to prevent exactly this — do NOT retry blind or "escalate"
+  to FNP-flags: an extra flash cycle for nothing.
+- `--no_fw_ctrl` (direct path) — a valid ALTERNATIVE on non-secure cards:
+  skips the digest gate, writes the inactive bank and switches. No longer
+  the first choice for content-modified images (plain + fresh digest is
+  the canon), still the mode when the MCC path is unavailable (mstflint's
+  own recommendation: "Unsupported operation under Controlled FW, please
+  retry with --no_fw_ctrl"). NOT for secure cards (see above).
 - Flags/precedents from past journals are NOT a mode source — they drift
   from this skill. This skill + docs/40 §6 are the only canon.
-- `--no_fw_ctrl` writes the inactive bank and switches (GUID trap below
-  does not apply, but Rule 3 GUID embed stays mandatory as standard).
+- Rule 3 GUID embed (mellanox-fw-build) stays mandatory as standard.
+
+### Pre-burn digest check (non-secure card, plain burn — mandatory)
+
+FW checks the image's 0xA0 SHA-256 digest on plain (MCC) burn; a stale
+digest = deterministic 0x2 after the full download (docs/20 §14.5).
+`mstflint sign` (no keys = `FwInsertSHA256`) is idempotent — a fresh image
+comes back 0 diff. Use the md5 as the check, on the server, right before
+the burn (one ssh call):
+
+```sh
+ssh <host> 'md5sum /root/<img>.bin; mstflint -i /root/<img>.bin sign; md5sum /root/<img>.bin'
+```
+
+Expected: `Updating SIGNATURE section - OK` + `Updating ITOC section - OK`
+between the two md5 lines.
+
+- md5 equal → digest fresh → burn.
+- md5 differs → the digest was STALE (mstflint just recomputed it) →
+  **STOP + report to the coordinator** (hint: «forgotten `mlxini.py sign`
+  at build time?»). The file on the server is now signed — whether to
+  proceed is the coordinator's call.
+- Burn with `--no_fw_ctrl` (alternative path) — no check: the direct path
+  skips the digest gate.
 
 ## Activate after burn (mandatory second half of every burn)
 
@@ -134,8 +179,10 @@ it):
 1. `ssh <host> 'uptime -s; (reboot >/dev/null 2>&1 &); true'` — records the
    PRE boot id in the same short string that launches the reboot
    (backgrounded so the call returns cleanly).
-2. `timeout 600 bash -c 'sleep 10; until ssh -o ConnectTimeout=5 <host> "uptime -s" 2>/dev/null; do sleep 10; done'`
-   (tool timeout 660000 ms) — prints the POST boot id.
+2. Wait for the host back and capture the POST boot id — the
+   ssh-reachability loop from **unix-process-ops** (boot variant,
+   `uptime -s` as the probe instead of `true`; inner `timeout 600`, tool
+   timeout 660000 ms).
 3. post ≠ pre ⇒ rebooted; post == pre ⇒ host never went down (ssh answers
    it) — re-issue 1. The comparison IS the wait loop's output.
 4. **Prove the image:** `q`/`dc`/`ri` all read FLASH (active slot), never
@@ -171,7 +218,9 @@ ssh <host> 'mstflint -i <img.bin> q'    # look at the `Base GUID:` line
 | Logical dump (image — backup/rollback) | `mstflint -d <BDF> ri <file.bin>` |
 | Raw dump (size per flash-size table) | `mstflint -d <BDF> rb <0x_start> <0x_len> <file.raw>` |
 | Config dump | `mstflint -d <BDF> dc > <file.ini>` |
-| Burn | `mstflint -d <BDF> -i <img.bin> --no_fw_ctrl -y burn` (Burn mode) |
+| Pre-burn digest check (non-secure, plain burn) | `md5sum; mstflint -i <img.bin> sign; md5sum` — equal → OK, differs → STOP (Pre-burn digest check) |
+| Burn (non-secure, canonical) | `mstflint -d <BDF> -i <img.bin> -y burn` (Burn mode) |
+| Burn (non-secure, alternative — direct path) | `mstflint -d <BDF> -i <img.bin> --no_fw_ctrl -y burn` (Burn mode) |
 | Activate (cheap reset) | `mstfwreset -d <BDF> -t 0 -l 3 -y r` (Activate after burn) |
 | FW pending/running status | `mstfwreset -d <BDF> s` |
 

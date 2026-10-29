@@ -1,6 +1,6 @@
 ---
 name: mellanox-fw-build
-description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, or running offline image verify gates (mlxini, mstflint -i verify).
+description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, recomputing the 0xA0 digest (mlxini.py sign / sign --check) before a plain burn, or running offline image verify gates (mlxini, mstflint -i verify).
 ---
 
 # Mellanox custom FW build (offline, before any burn)
@@ -68,12 +68,39 @@ card's identity embedded in the image beforehand:
 ## Rule 4 — Offline gates (all must pass before burn)
 
 1. Full CRC verify of the built image (project: `mlxini.py verify --deep`)
-   → PASS.
+   → PASS. (`verify` also prints the info line
+   `signature 0xA0: fresh|stale|rsa|empty|missing|v2` — info, does not
+   change rc.)
 2. Vendor gate: `mstflint -i <img.bin> verify` →
    `FW image verification succeeded. Image is bootable.`
 3. Rule-2 checks (0x30 in place, round-trip).
 4. Diff vs base: only the intended zones changed (section-wise diff; no
    accidental touches of code/signature sections).
+5. 0xA0 digest (Rule 5): `mlxini.py sign --check <img>` → rc 0 (fresh) —
+   mandatory when the burn will be plain/MCC on a non-secure card.
+
+## Rule 5 — 0xA0 digest: recompute on every content change (sign)
+
+Plain/MCC burn on a non-secure card checks the image's 0xA0 SHA-256 digest
+(FW content-digest gate, unconditional; docs/20 §14.5). A stale digest
+fails the burn deterministically after the full download
+(`-E- The Digest in the signature is wrong`, MCC 0x2) — a wasted flash
+cycle.
+
+- Default: after ANY content change (ini, code, GUID, PSID, …) recompute
+  the digest — `mlxini.py sign <img>` (bit-equivalent to
+  `mstflint -i <img> sign` with no keys = `FwInsertSHA256`; in-place,
+  idempotent — a fresh image comes back 0 diff). Skip only on explicit
+  owner/coordinator instruction.
+- Check: `mlxini.py sign --check <img>` — rc 0 fresh / 1 stale /
+  2 rsa/empty/missing/V2. Gate before handoff to burn (Rule 4.5).
+- `--force`: overwrites an RSA-signed 0xA0 (normalizes the section,
+  uuid fields → 0; mstflint parity) — a deliberate act, say so in the
+  report.
+- V2 (Carmel+, secure-boot V2) images: refused (mask not implemented) —
+  out of scope.
+- `--no_fw_ctrl` burn (direct path) does NOT check the digest — the
+  recompute is not needed there (still harmless; keep the default).
 
 ## Mini-pipeline (generic)
 
@@ -87,8 +114,10 @@ card's identity embedded in the image beforehand:
 6. Inject; run the in-place checks (Rule 2).
 7. Embed GUID/MAC of the target card (Rule 3).
 8. PSID/name/description if the SKU changes (docs/40 §5).
-9. Offline gates (Rule 4).
-10. Hand off to burn: mellanox-flash-ops + docs/40 §6.
+9. Recompute the 0xA0 digest — `mlxini.py sign <img>` (Rule 5; default
+   for every content-modified build).
+10. Offline gates (Rule 4), incl. `sign --check` rc 0.
+11. Hand off to burn: mellanox-flash-ops + docs/40 §6.
 
 ## Common mistakes
 
@@ -98,6 +127,9 @@ card's identity embedded in the image beforehand:
 - "The text did not change, so the size did not change" — zlib drift.
 - Burning an image with zeroed GUIDs under `--ignore_dev_data` — the
   card loses its identity.
+- Handing off a content-modified image for a plain burn without
+  `mlxini.py sign` — deterministic MCC 0x2 "The Digest in the signature
+  is wrong" after the full download (stale 0xA0).
 - Trimming key=value lines "because FW does not read 0x30 anyway" —
   kills `dc`-parity and the reference value.
 - Skipping the round-trip / address check after injection.
