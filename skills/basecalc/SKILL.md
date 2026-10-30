@@ -6,14 +6,24 @@ description: Use when computing arithmetic or bitwise operations on numbers in m
 # basecalc
 
 Deterministic arithmetic, bitwise ops, and base conversion for mixed-radix
-operands. Run `calc.py` — fetched from the MCP server via the
-`skill_file(basecalc, calc.py)` tool (fallback: a checkout of this repo) —
-do not do hex/bit math in your head.
+operands. Do not do hex/bit math in your head.
+
+## Get calc.py (once per host)
+
+`calc.py` is NOT on disk next to this SKILL.md — never glob/find for it.
+The `skill_file(basecalc, calc.py)` MCP tool returns the script content as
+text. Make it runnable:
+
+1. call `skill_file(basecalc, calc.py)`;
+2. save its output VERBATIM to `/tmp/opencode/calc.py` with the write tool
+   (the whole file, byte-for-byte, no edits);
+3. verify: `python3 /tmp/opencode/calc.py --selftest` — must print
+   `selftest: N ok` and no `FAIL` lines.
 
 ## Run
 
 ```sh
-python3 calc.py [-w N] [-f BASE] ...
+python3 /tmp/opencode/calc.py [-w N] [-f BASE] ...
 ```
 
 - `-w N` — mask the result to N bits (bin is zero-padded to N); makes

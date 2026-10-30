@@ -11,10 +11,13 @@ The context window is lossy: auto-compaction replaces session history with a
 summary. The session log is complete. Treat the log as the source of truth for
 what a session found, concluded, and excluded — never the compaction summary.
 
-Helper: `oclog.py` — fetched from the MCP server via the
-`skill_file(analyzing-opencode-logs, oclog.py)` tool (fallback: a checkout of
-this repo). `oclog.py --help` for subcommands.
-It works on `opencode export` JSON and the opencode SQLite DB (stdlib only).
+Helper: `oclog.py` (works on `opencode export` JSON and the opencode SQLite
+DB, stdlib only; `--help` for subcommands). It is NOT on disk next to this
+SKILL.md — never glob/find for it. The
+`skill_file(analyzing-opencode-logs, oclog.py)` MCP tool returns the script
+content as text: save that output VERBATIM to `/tmp/opencode/oclog.py` with
+the write tool (the whole file, no edits), then verify with
+`python3 /tmp/opencode/oclog.py --help`.
 
 ## Sources
 

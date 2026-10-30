@@ -39,10 +39,14 @@ description: Use when working with a server BMC over IPMI — power status/on/of
 
 ## SOL via the bridge (sol_bridge.py)
 
-Direct `ipmitool sol activate` with pipes/redirects dies on `tcgetattr` (stdin
-is not a TTY). The bridge `sol_bridge.py` — fetched from the MCP server via
-the `skill_file(ipmi-ops, sol_bridge.py)` tool (fallback: a checkout of this
-repo) — gives ipmitool a pty: keys in via fifo, console out to a raw log.
+Direct `ipmitool sol activate` with pipes/redirects dies on `tcgetattr`
+(stdin is not a TTY). The bridge `sol_bridge.py` gives ipmitool a pty: keys
+in via fifo, console out to a raw log. `sol_bridge.py` is NOT on disk next
+to this SKILL.md — never glob/find for it: the
+`skill_file(ipmi-ops, sol_bridge.py)` MCP tool returns the script content
+as text; save it VERBATIM to `/tmp/opencode/sol_bridge.py` with the write
+tool (the whole file, no edits), verify with
+`python3 -m py_compile /tmp/opencode/sol_bridge.py`.
 Check `… sol info`
 first: `Enabled: false` = SOL is disabled in the BMC/BIOS settings — the
 bridge will not help, fix the setting (or skip SOL entirely).
@@ -52,7 +56,7 @@ Launch (one command; expect `[SOL Session operational` in the log):
 ```sh
 source ~/git/IMPLEMENTATION/<creds>.txt && export IP L P
 mkfifo /tmp/solin.fifo
-nohup python3 sol_bridge.py /tmp/solin.fifo /tmp/sol.log >/dev/null 2>&1 &
+nohup python3 /tmp/opencode/sol_bridge.py /tmp/solin.fifo /tmp/sol.log >/dev/null 2>&1 &
 sleep 3; tail -c 300 /tmp/sol.log | cat -v
 ```
 
