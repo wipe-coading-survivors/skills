@@ -2,6 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
+import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,8 +73,40 @@ test("http transport: POST /mcp, GET /mcp SSE, GET /healthz", async () => {
   assert.equal(healthRes.status, 200);
   assert.equal(await healthRes.text(), "ok");
 
+  const fileRes = await fetch(base + "/skill-file/alpha/tool.txt");
+  assert.equal(fileRes.status, 200);
+  assert.equal(fileRes.headers.get("content-type"), "application/octet-stream");
+  assert.equal(await fileRes.text(), "hello tool");
+
+  const escapeRes = await fetch(base + "/skill-file/alpha/%2E%2E%2Fnotaskill%2Freadme.txt");
+  assert.equal(escapeRes.status, 400);
+
   const sseRes = await fetch(base + "/mcp");
   assert.equal(sseRes.status, 200);
   assert.ok(sseRes.headers.get("content-type").startsWith("text/event-stream"));
   await sseRes.body.cancel();
+  proc.kill();
+  proc = undefined;
+});
+
+test("http transport: LISTEN_FDS uses inherited socket", async () => {
+  const listener = createNetServer();
+  await new Promise((resolveP, rejectP) => {
+    listener.once("error", rejectP);
+    listener.listen(0, "127.0.0.1", resolveP);
+  });
+  const port = listener.address().port;
+  const fd = listener._handle.fd;
+  proc = spawn(process.execPath, [serverPath], {
+    env: { ...process.env, MCP_MODE: "http", LISTEN_FDS: "1", SKILLS_DIRS: fixturesSkills },
+    stdio: ["ignore", "pipe", "pipe", fd],
+  });
+  await new Promise((resolveP) => listener.close(resolveP));
+  const activatedPort = await waitForPort(proc, 5000);
+  assert.equal(activatedPort, port);
+  const healthRes = await fetch("http://127.0.0.1:" + port + "/healthz");
+  assert.equal(healthRes.status, 200);
+  assert.equal(await healthRes.text(), "ok");
+  proc.kill();
+  proc = undefined;
 });

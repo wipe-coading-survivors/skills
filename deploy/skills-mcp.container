@@ -1,0 +1,16 @@
+[Unit]
+Description=Skills MCP HTTP server
+
+[Container]
+ContainerName=skills-mcp
+Environment=MCP_MODE=http
+Image=localhost/skills-mcp:local
+PublishPort=127.0.0.1:8080:8080
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=90
+
+[Install]
+WantedBy=default.target
