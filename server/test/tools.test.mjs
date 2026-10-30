@@ -34,7 +34,7 @@ test("defaultSkillsDir: sibling skills/ next to the server dir (<repo>/skills)",
 
 test("buildTools: names", () => {
   const tools = buildTools(skills());
-  assert.deepEqual(tools.map((t) => t.name), ["list_skills", "alpha_docs", "beta_docs", "skill_file"]);
+  assert.deepEqual(tools.map((t) => t.name), ["list_skills", "alpha_docs", "beta_docs", "skill_file", "basecalc_calc"]);
 });
 
 test("initialize: echoes protocolVersion, serverInfo.name is skills", () => {
@@ -120,8 +120,23 @@ test("resources/read: full alpha SKILL.md", () => {
   assert.equal(resp.result.contents[0].text, full);
 });
 
+test("tools/call basecalc_calc: arithmetic, floor division, width and format", () => {
+  const sum = handleRequest({ id: 13, method: "tools/call", params: { name: "basecalc_calc", arguments: { op: "sum", a: "0xFF", b: "230" } } }, skills());
+  assert.equal(sum.result.content[0].text, "0x1e5  485  0o745  0b111100101");
+  const div = handleRequest({ id: 14, method: "tools/call", params: { name: "basecalc_calc", arguments: { op: "div", a: "-7", b: "2", format: "dec" } } }, skills());
+  assert.equal(div.result.content[0].text, "-4");
+  const not = handleRequest({ id: 15, method: "tools/call", params: { name: "basecalc_calc", arguments: { op: "not", a: "0x0F", width: 8, format: "bin" } } }, skills());
+  assert.equal(not.result.content[0].text, "0b11110000");
+});
+
+test("tools/call basecalc_calc: bad input returns a tool error", () => {
+  const resp = handleRequest({ id: 16, method: "tools/call", params: { name: "basecalc_calc", arguments: { op: "div", a: "1", b: "0" } } }, skills());
+  assert.equal(resp.result.isError, true);
+  assert.ok(resp.result.content[0].text.includes("division by zero"));
+});
+
 test("tools/call unknown tool: -32602", () => {
-  const resp = handleRequest({ id: 13, method: "tools/call", params: { name: "nope" } }, skills());
+  const resp = handleRequest({ id: 17, method: "tools/call", params: { name: "nope" } }, skills());
   assert.equal(resp.error.code, -32602);
 });
 

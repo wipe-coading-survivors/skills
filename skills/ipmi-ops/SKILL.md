@@ -41,12 +41,18 @@ description: Use when working with a server BMC over IPMI — power status/on/of
 
 Direct `ipmitool sol activate` with pipes/redirects dies on `tcgetattr`
 (stdin is not a TTY). The bridge `sol_bridge.py` gives ipmitool a pty: keys
-in via fifo, console out to a raw log. `sol_bridge.py` is NOT on disk next
-to this SKILL.md — never glob/find for it: the
-`skill_file(ipmi-ops, sol_bridge.py)` MCP tool returns the script content
-as text; save it VERBATIM to `/tmp/opencode/sol_bridge.py` with the write
-tool (the whole file, no edits), verify with
-`python3 -m py_compile /tmp/opencode/sol_bridge.py`.
+in via fifo, console out to a raw log. Download it without routing the
+content through the model context. Use the origin of the configured `skills`
+MCP HTTP server (default `http://127.0.0.1:8080`):
+
+```sh
+mkdir -p /tmp/opencode
+curl --noproxy '127.0.0.1,localhost' --fail --silent --show-error \
+  http://127.0.0.1:8080/skill-file/ipmi-ops/sol_bridge.py \
+  --output /tmp/opencode/sol_bridge.py
+python3 -m py_compile /tmp/opencode/sol_bridge.py
+```
+
 Check `… sol info`
 first: `Enabled: false` = SOL is disabled in the BMC/BIOS settings — the
 bridge will not help, fix the setting (or skip SOL entirely).

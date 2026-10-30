@@ -12,12 +12,17 @@ summary. The session log is complete. Treat the log as the source of truth for
 what a session found, concluded, and excluded — never the compaction summary.
 
 Helper: `oclog.py` (works on `opencode export` JSON and the opencode SQLite
-DB, stdlib only; `--help` for subcommands). It is NOT on disk next to this
-SKILL.md — never glob/find for it. The
-`skill_file(analyzing-opencode-logs, oclog.py)` MCP tool returns the script
-content as text: save that output VERBATIM to `/tmp/opencode/oclog.py` with
-the write tool (the whole file, no edits), then verify with
-`python3 /tmp/opencode/oclog.py --help`.
+DB, stdlib only; `--help` for subcommands). Download it without routing the
+content through the model context. Use the origin of the configured `skills`
+MCP HTTP server (default `http://127.0.0.1:8080`):
+
+```sh
+mkdir -p /tmp/opencode
+curl --noproxy '127.0.0.1,localhost' --fail --silent --show-error \
+  http://127.0.0.1:8080/skill-file/analyzing-opencode-logs/oclog.py \
+  --output /tmp/opencode/oclog.py
+python3 /tmp/opencode/oclog.py --help
+```
 
 ## Sources
 

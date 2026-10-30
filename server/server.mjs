@@ -121,6 +121,21 @@ export function buildTools(skills) {
       required: ["skill", "path"],
     },
   });
+  tools.push({
+    name: "basecalc_calc",
+    description: "Deterministic integer arithmetic, bitwise operations, and base conversion for mixed-radix operands. Use instead of mental arithmetic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        op: { type: "string", description: "Operation: sum/add, sub/minus/diff, mul/mult, div, mod, pow/power, and, or, xor, shl/lsh, shr/rsh, not, conv/base/show, divmod, or the corresponding symbol." },
+        a: { type: "string", description: "First operand: hex 0x, octal 0o or leading 0, binary 0b or trailing b, decimal; sign and _ separators allowed." },
+        b: { type: "string", description: "Second operand; required except for not and conv/base/show." },
+        width: { type: "integer", minimum: 1, description: "Optional result width in bits; masks the result and zero-pads binary output." },
+        format: { type: "string", enum: ["hex", "dec", "oct", "bin"], description: "Optional single output base; default prints hex, dec, oct, bin." },
+      },
+      required: ["op", "a"],
+    },
+  });
   return tools;
 }
 
@@ -141,6 +156,147 @@ function textResult(text, isError) {
   const result = { content: [{ type: "text", text }] };
   if (isError) result.isError = true;
   return result;
+}
+
+const BASECALC_OPS = {
+  sum: "+",
+  add: "+",
+  sub: "-",
+  minus: "-",
+  diff: "-",
+  mul: "*",
+  mult: "*",
+  div: "/",
+  mod: "%",
+  pow: "**",
+  power: "**",
+  and: "&",
+  or: "|",
+  xor: "^",
+  shl: "<<",
+  lsh: "<<",
+  shr: ">>",
+  rsh: ">>",
+};
+
+function basecalcParse(value) {
+  let s = String(value).trim();
+  let neg = false;
+  if (s[0] === "+" || s[0] === "-") {
+    neg = s[0] === "-";
+    s = s.slice(1);
+  }
+  if (!s) throw new Error("empty operand");
+  const low = s.toLowerCase();
+  let digits = s;
+  let prefix = "";
+  let radix = 10;
+  if (low.startsWith("0x")) {
+    digits = s.slice(2);
+    prefix = "0x";
+    radix = 16;
+  } else if (low.startsWith("0o")) {
+    digits = s.slice(2);
+    prefix = "0o";
+    radix = 8;
+  } else if (low.startsWith("0b")) {
+    digits = s.slice(2);
+    prefix = "0b";
+    radix = 2;
+  } else if (s.length > 1 && low.endsWith("b") && /^[01_]+$/.test(s.slice(0, -1))) {
+    digits = s.slice(0, -1);
+    prefix = "0b";
+    radix = 2;
+  } else if (s.length > 1 && s[0] === "0") {
+    prefix = "0o";
+    radix = 8;
+  }
+  const clean = digits.replaceAll("_", "");
+  const patterns = {
+    2: /^[01]+$/,
+    8: /^[0-7]+$/,
+    10: /^[0-9]+$/,
+    16: /^[0-9a-f]+$/i,
+  };
+  if (!patterns[radix].test(clean)) throw new Error("bad operand: " + value);
+  const v = BigInt(prefix + clean);
+  return neg ? -v : v;
+}
+
+function basecalcDivmod(a, b) {
+  if (b === 0n) throw new Error("division by zero");
+  let q = a / b;
+  let r = a % b;
+  if (r !== 0n && (r > 0n) !== (b > 0n)) {
+    q -= 1n;
+    r += b;
+  }
+  return { q, r };
+}
+
+function basecalcCompute(args) {
+  const word = String(args.op).toLowerCase();
+  const op = BASECALC_OPS[word] || word;
+  const a = basecalcParse(args.a);
+  if (word === "not") return ~a;
+  if (["conv", "base", "show"].includes(word)) return a;
+  if (args.b === undefined) throw new Error("operation requires b: " + word);
+  const b = basecalcParse(args.b);
+  if (op === "+") return a + b;
+  if (op === "-") return a - b;
+  if (op === "*") return a * b;
+  if (op === "/" || op === "//") return basecalcDivmod(a, b).q;
+  if (op === "%") return basecalcDivmod(a, b).r;
+  if (op === "divmod") return basecalcDivmod(a, b);
+  if (op === "**") {
+    if (b < 0n) throw new Error("negative exponent not supported (integers only)");
+    return a ** b;
+  }
+  if (op === "&") return a & b;
+  if (op === "|") return a | b;
+  if (op === "^") return a ^ b;
+  if (op === "<<") {
+    if (b < 0n) throw new Error("negative shift count");
+    return a << b;
+  }
+  if (op === ">>") {
+    if (b < 0n) throw new Error("negative shift count");
+    return a >> b;
+  }
+  throw new Error("unknown op: " + args.op);
+}
+
+function basecalcRender(v, width, format) {
+  let bits;
+  if (width !== undefined) {
+    if (!Number.isInteger(width) || width <= 0) throw new Error("width must be positive");
+    bits = BigInt(width);
+    v &= (1n << bits) - 1n;
+  }
+  const order = format === undefined ? ["hex", "dec", "oct", "bin"] : [format];
+  if (order.some((base) => !["hex", "dec", "oct", "bin"].includes(base))) {
+    throw new Error("bad format: " + format);
+  }
+  const renderOne = (value, base) => {
+    if (base === "hex") return "0x" + value.toString(16);
+    if (base === "dec") return value.toString(10);
+    if (base === "oct") return "0o" + value.toString(8);
+    const bin = value.toString(2);
+    return "0b" + (bits === undefined ? bin : bin.padStart(width, "0"));
+  };
+  return order.map((base) => (v < 0n ? "-" + renderOne(-v, base) : renderOne(v, base))).join("  ");
+}
+
+function callBasecalc(id, args) {
+  try {
+    const v = basecalcCompute(args);
+    const text = typeof v === "object"
+      ? "q: " + basecalcRender(v.q, args.width, args.format) + "\nr: " + basecalcRender(v.r, args.width, args.format)
+      : basecalcRender(v, args.width, args.format);
+    return { jsonrpc: "2.0", id, result: textResult(text) };
+  } catch (e) {
+    return { jsonrpc: "2.0", id, result: textResult("calc: " + e.message, true) };
+  }
 }
 
 function skillSections(text) {
@@ -169,19 +325,28 @@ function callDocs(id, skill, args) {
   return { jsonrpc: "2.0", id, result: textResult(hits.map((s) => s.text).join("\n\n")) };
 }
 
-function callSkillFile(id, args, skills) {
-  const skill = skills.find((s) => s.name === (args && args.skill));
-  if (!skill) return { jsonrpc: "2.0", id, result: textResult("unknown skill: " + (args && args.skill), true) };
+function readSkillFile(skillName, filePath, skills) {
+  const skill = skills.find((s) => s.name === skillName);
+  if (!skill) return { error: "unknown skill: " + skillName, status: 404 };
   const root = resolve(skill.dir);
-  const target = resolve(join(root, String(args.path)));
+  const target = resolve(join(root, String(filePath)));
   if (target !== root && !target.startsWith(root + sep)) {
-    return { jsonrpc: "2.0", id, result: textResult("path outside skill dir: " + args.path, true) };
+    return { error: "path outside skill dir: " + filePath, status: 400 };
   }
-  const buf = readFileSync(target);
-  if (buf.subarray(0, 8192).includes(0)) {
+  try {
+    return { buf: readFileSync(target) };
+  } catch {
+    return { error: "file not found: " + filePath, status: 404 };
+  }
+}
+
+function callSkillFile(id, args, skills) {
+  const file = readSkillFile(args && args.skill, args && args.path, skills);
+  if (file.error) return { jsonrpc: "2.0", id, result: textResult(file.error, true) };
+  if (file.buf.subarray(0, 8192).includes(0)) {
     return { jsonrpc: "2.0", id, result: textResult("binary file not supported: " + args.path, true) };
   }
-  return { jsonrpc: "2.0", id, result: textResult(buf.toString("utf8")) };
+  return { jsonrpc: "2.0", id, result: textResult(file.buf.toString("utf8")) };
 }
 
 function callTool(id, params, skills) {
@@ -194,6 +359,7 @@ function callTool(id, params, skills) {
     return { jsonrpc: "2.0", id, result: textResult(text) };
   }
   if (name === "skill_file") return callSkillFile(id, args, skills);
+  if (name === "basecalc_calc") return callBasecalc(id, args);
   const m = typeof name === "string" ? name.match(/^(.*)_docs$/) : null;
   if (m) {
     const skill = skills.find((s) => s.name.replace(/-/g, "_") === m[1]);
@@ -246,7 +412,7 @@ function sendJson(res, obj) {
   res.end(JSON.stringify(obj));
 }
 
-export function startHttpServer(skills, port) {
+export function startHttpServer(skills, options) {
   return new Promise((resolveP, rejectP) => {
     const onError = (e) => rejectP(e);
     const server = createServer((req, res) => {
@@ -281,6 +447,29 @@ export function startHttpServer(skills, port) {
         });
         return;
       }
+      const skillFileMatch = path.match(/^\/skill-file\/([^/]+)\/(.+)$/);
+      if (req.method === "GET" && skillFileMatch) {
+        let file;
+        try {
+          file = readSkillFile(
+            decodeURIComponent(skillFileMatch[1]),
+            decodeURIComponent(skillFileMatch[2]),
+            skills
+          );
+        } catch {
+          res.writeHead(400, { "content-type": "text/plain" });
+          res.end("bad skill-file URL");
+          return;
+        }
+        if (file.error) {
+          res.writeHead(file.status, { "content-type": "text/plain" });
+          res.end(file.error);
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": file.buf.length });
+        res.end(file.buf);
+        return;
+      }
       if (req.method === "GET" && path === "/mcp") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
         res.flushHeaders();
@@ -296,7 +485,7 @@ export function startHttpServer(skills, port) {
       res.end("not found");
     });
     server.once("error", onError);
-    server.listen(port, () => {
+    server.listen(options, () => {
       server.removeListener("error", onError);
       resolveP(server);
     });
@@ -311,7 +500,10 @@ async function main() {
   const skills = discoverSkills(dirs);
   if (process.env.MCP_MODE === "http") {
     const port = process.env.PORT === undefined ? 8080 : Number(process.env.PORT);
-    const server = await startHttpServer(skills, port);
+    const server = await startHttpServer(
+      skills,
+      process.env.LISTEN_FDS === "1" ? { fd: 3 } : port
+    );
     process.stderr.write("listening on port " + server.address().port + "\n");
     return;
   }
