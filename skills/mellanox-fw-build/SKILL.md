@@ -27,29 +27,39 @@ section (zlib-compressed ini — what `mstflint dc` prints):
 - Purpose: on-card discrimination — `mstflint -d <BDF> dc | head` must
   immediately tell a custom image from a vendor one and name the build.
 
-## Rule 2 — 0x30 stays in place (never relocate silently)
+## Rule 2 — 0x30 ini edits: in-place preferred; relocation is gated-safe
 
-Relocating the 0x30 section has corrupted flashes on FNP-burn (INI region
-left 0xFF; mlxini journal 2026-09-21 §13). Two independent triggers:
+Relocating 0x30 is burn-safe on current mlxini (since the 2026-10-31
+repack-burn-safety cycle): the planner relocates to a 64K-aligned tail and
+reorders the ITOC entry, the burn-order invariant is gated unconditionally
+(`verify` FAIL rc 1; `inject` refuses rc 2 before writing any file), and
+0xA0 is auto-signed after any relocation. The historical corruption
+(mlxini journal 2026-09-21 §13; reattributed 2026-10-31: INI was
+written-then-erased by a sector revisit — burn-order violation of the
+pre-cycle allocator, mlxini docs/10 §4.9 + docs/55 §10) is reproducible
+today only via the research flag `--unsafe-relocation` (bypasses the
+pre-write gate; NEVER for production builds).
+
+Growth awareness (why the size can move even without edits):
 
 - the ini text grows (e.g. the build-ID comment);
 - zlib drift: a different zlib build emits a larger stream for identical
   text (+4..+12 B measured on all 18 vendor images with the local zlib-ng).
 
-Budget and checks:
+Checks:
 
-- Compressed+DW-padded size of the new ini MUST be ≤ the original 0x30
-  section size (`e.size` of the ITOC entry); keep ≥32 B headroom
-  (patched5 practice).
-- If over budget: trim vendor doc-comments (`;;`-lines, the iniprep
-  banner). The FW does not parse section 0x30 AT ALL (debug copy; the
-  live config is the binary sections 0x08/0x09/0x11/0x12, which the ini
-  only partially mirrors) — trimming comments is functionally safe. Keep
-  key=value lines intact: `dc`-parity and human/agent reference.
-- After injection verify: 0x30 ITOC entry address unchanged, new size ≤
-  old, round-trip extract == the edited ini text.
-- Tooling: `mlxini.py inject` errors on overflow unless `--repack-force`
-  is passed explicitly; relocation is a deliberate, reviewed act.
+- Over budget → relocate: `mlxini.py inject ... --repack-force`
+  (deliberate, reviewed layout change: output layout differs from base —
+  relocated entry is the LAST ITOC entry, old place erased 0xFF).
+- Optional in-place path (nicer diff): trim vendor doc-comments
+  (`;;`-lines, the iniprep banner). The FW does not parse section 0x30 AT
+  ALL (debug copy; the live config is the binary sections
+  0x08/0x09/0x11/0x12, which the ini only partially mirrors) — trimming
+  comments is functionally safe; keep key=value lines intact
+  (`dc`-parity). A choice, NOT a requirement.
+- After injection verify: round-trip extract == the edited ini text;
+  `mlxini.py verify` PASS (includes the burn-order check); 0xA0 fresh
+  (autosign already recomputed it on relocation — `sign --check` rc 0).
 
 ## Rule 3 — Embed GUID/MAC before burn (FNP risk)
 
@@ -154,9 +164,10 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 2. Backup `ri` (mellanox-flash-ops) — known-good in reach.
 3. Pick a base image: same chip / PSID family (docs/40 §3, §11).
 4. Extract the ini from the base (0x30).
-5. Edit the config; add the build-ID comment (Rule 1); trim vendor
-   comments if over budget (Rule 2).
-6. Inject; run the in-place checks (Rule 2).
+5. Edit the config; add the build-ID comment (Rule 1); if over budget,
+   inject with `--repack-force` — relocation is gated-safe (Rule 2);
+   trimming `;;` comments is optional for a minimal diff.
+6. Inject; run the Rule-2 checks (round-trip, verify PASS, 0xA0 fresh).
 7. Embed GUID/MAC of the target card (Rule 3).
 8. PSID/name/description if the SKU changes (docs/40 §5).
 9. Recompute the 0xA0 digest — `mlxini.py sign <img>` (Rule 5; default
@@ -171,8 +182,12 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 ## Common mistakes
 
 - `#` comment syntax — the ini uses `;`.
-- Oversized build-ID / untrimmed ini → section relocation → corrupted
-  FNP-burn (historical incident, mlxini journal 2026-09-21 §13).
+- Heroic ini trimming to force an in-place fit — unnecessary since
+  relocation became gated-safe (mlxini 2026-10-31); trim only when you
+  want the minimal diff. Historical: pre-cycle relocation corrupted
+  FNP-burn (burn-order violation — mlxini docs/10 §4.9, docs/55 §10).
+- `--unsafe-relocation` in a production build — legacy reproducer of the
+  burn-order bug class; bypasses the pre-write gate.
 - "The text did not change, so the size did not change" — zlib drift.
 - Burning an image with zeroed GUIDs under `--ignore_dev_data` — the
   card loses its identity.
