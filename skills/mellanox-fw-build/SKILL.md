@@ -182,10 +182,6 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 ## Common mistakes
 
 - `#` comment syntax — the ini uses `;`.
-- Heroic ini trimming to force an in-place fit — unnecessary since
-  relocation became gated-safe (mlxini 2026-10-31); trim only when you
-  want the minimal diff. Historical: pre-cycle relocation corrupted
-  FNP-burn (burn-order violation — mlxini docs/10 §4.9, docs/55 §10).
 - `--unsafe-relocation` in a production build — legacy reproducer of the
   burn-order bug class; bypasses the pre-write gate.
 - "The text did not change, so the size did not change" — zlib drift.
