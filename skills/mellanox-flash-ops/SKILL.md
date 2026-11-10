@@ -99,7 +99,7 @@ vector, FNP) are research territory — docs/20 §14-15.
 | Situation | Mode |
 |---|---|
 | Live card + content-modified image (stock + patches, signatures untouched — every custom lab build), non-secure card | **plain `-y burn`** — canonical; pre-burn digest check below (mandatory) |
-| FNP recovery / cross-PSID | legacy flags (`--nofs`, `--ignore_dev_data`, `-ocr`, `-apc`) — docs/40 §6 |
+| FNP («Flash Not Present», MFT livefish docs) recovery / cross-PSID | legacy flags (`--nofs`, `--ignore_dev_data`, `-ocr`, `-apc`) — docs/40 §6 |
 
 ```sh
 mstflint -d <BDF> -i <img.bin> -y burn
