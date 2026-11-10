@@ -138,7 +138,7 @@ between the two md5 lines.
 
 - md5 equal → digest fresh → burn.
 - md5 differs → the digest was STALE (mstflint just recomputed it) →
-  **STOP + report to the coordinator** (hint: «forgotten `mlxini.py sign`
+  **STOP + report to the coordinator** (hint: «forgotten `mlxfwutil.py sign`
   at build time?»). The file on the server is now signed — whether to
   proceed is the coordinator's call.
 - Burn with `--no_fw_ctrl` (alternative path) — no check: the direct path
