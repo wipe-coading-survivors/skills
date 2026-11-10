@@ -1,16 +1,16 @@
 ---
 name: mellanox-fw-build
-description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, recomputing the 0xA0 digest (mlxini.py sign / sign --check) before a plain burn, building self-signed secure-fw images (own key vault 0xA4 + RSA-4096 SignForFwUpdate), or running offline image verify gates (mlxini, mstflint -i verify).
+description: Use when building or customizing Mellanox ConnectX firmware images offline — patching ini/config sections of a base .bin, adding a build identifier to 0x30 DBG_FW_INI, embedding GUID/MAC into an image before a burn, recomputing the 0xA0 digest (mlxfwutil.py sign / sign --check) before a plain burn, building self-signed secure-fw images (own key vault 0xA4 + RSA-4096 SignForFwUpdate), or running offline image verify gates (mlxfwutil.py, mstflint -i verify).
 ---
 
 # Mellanox custom FW build (offline, before any burn)
 
 Scope: offline image assembly/patching. The burn itself is out of scope —
-use the mellanox-flash-ops skill + `docs/40-cross-flash-ops.md` in the
+use the mellanox-flash-ops skill + `docs/850-howto/100-cross-flash-ops.md` in the
 mlxini repo (read before any burn).
 
 Project tooling (mlxini repo): command table and the canonical pipeline —
-`docs/40` §4. This skill carries the rules, tool-agnostic.
+`docs/850-howto/100` §4. This skill carries the rules, tool-agnostic.
 
 ## Rule 1 — Build identifier (mandatory)
 
@@ -23,33 +23,44 @@ section (zlib-compressed ini — what `mstflint dc` prints):
 - Format (≤10-20 words total):
   `; <project> <build-name> (<yyyy-mm-dd>, <ref>): <what/why>`
   Precedent:
-  `; mlxini iRISC boot-injection PoC (2026-09-21, docs/55): shellcode @ dc 0x38d730 -> host CR 0x23f0 = 0xbadc0001`
+  `; mlxini iRISC boot-injection PoC (2026-09-21, docs/250-re/120-irisc/025-boot-injection): shellcode @ dc 0x38d730 -> host CR 0x23f0 = 0xbadc0001`
 - Purpose: on-card discrimination — `mstflint -d <BDF> dc | head` must
   immediately tell a custom image from a vendor one and name the build.
 
-## Rule 2 — 0x30 stays in place (never relocate silently)
+## Rule 2 — 0x30 ini edits: in-place preferred; relocation is gated-safe
 
-Relocating the 0x30 section has corrupted flashes on FNP-burn (INI region
-left 0xFF; mlxini journal 2026-09-21 §13). Two independent triggers:
+Relocating 0x30 is burn-safe on current mlxini (since the 2026-10-31
+repack-burn-safety cycle): the planner relocates to a 64K-aligned tail and
+reorders the ITOC entry, the burn-order invariant is gated unconditionally
+(`verify` FAIL rc 1; `inject` refuses rc 2 before writing any file), and
+0xA0 is auto-signed after any relocation. The historical corruption
+(mlxini journal 2026-09-21 §13; reattributed 2026-10-31: INI was
+written-then-erased by a sector revisit — burn-order violation of the
+pre-cycle allocator, mlxini docs/250-re/100-formats/050-fs4-burn-order +
+docs/250-re/120-irisc/025-boot-injection) is reproducible
+today only via the research flag `--unsafe-relocation` (bypasses the
+pre-write gate; NEVER for production builds).
+
+Growth awareness (why the size can move even without edits):
 
 - the ini text grows (e.g. the build-ID comment);
 - zlib drift: a different zlib build emits a larger stream for identical
   text (+4..+12 B measured on all 18 vendor images with the local zlib-ng).
 
-Budget and checks:
+Checks:
 
-- Compressed+DW-padded size of the new ini MUST be ≤ the original 0x30
-  section size (`e.size` of the ITOC entry); keep ≥32 B headroom
-  (patched5 practice).
-- If over budget: trim vendor doc-comments (`;;`-lines, the iniprep
-  banner). The FW does not parse section 0x30 AT ALL (debug copy; the
-  live config is the binary sections 0x08/0x09/0x11/0x12, which the ini
-  only partially mirrors) — trimming comments is functionally safe. Keep
-  key=value lines intact: `dc`-parity and human/agent reference.
-- After injection verify: 0x30 ITOC entry address unchanged, new size ≤
-  old, round-trip extract == the edited ini text.
-- Tooling: `mlxini.py inject` errors on overflow unless `--repack-force`
-  is passed explicitly; relocation is a deliberate, reviewed act.
+- Over budget → relocate: `mlxfwutil.py inject ... --repack-force`
+  (deliberate, reviewed layout change: output layout differs from base —
+  relocated entry is the LAST ITOC entry, old place erased 0xFF).
+- Optional in-place path (nicer diff): trim vendor doc-comments
+  (`;;`-lines, the iniprep banner). The FW does not parse section 0x30 AT
+  ALL (debug copy; the live config is the binary sections
+  0x08/0x09/0x11/0x12, which the ini only partially mirrors) — trimming
+  comments is functionally safe; keep key=value lines intact
+  (`dc`-parity). A choice, NOT a requirement.
+- After injection verify: round-trip extract == the edited ini text;
+  `mlxfwutil.py verify` PASS (includes the burn-order check); 0xA0 fresh
+  (autosign already recomputed it on relocation — `sign --check` rc 0).
 
 ## Rule 3 — Embed GUID/MAC before burn (FNP risk)
 
@@ -59,15 +70,16 @@ card's identity embedded in the image beforehand:
 
 - Source: `mstflint -d <BDF> q` on THAT card → `Base GUID:` / `Base MAC:`
   (MAC as hex without colons).
-- Embed into the image BEFORE the burn (project flow: `mlxini.py guides`,
+- Embed into the image BEFORE the burn (project flow: `mlxfwutil.py guides`,
   writes mDevInfo + MFG_INFO, self-verify).
 - Never plan "fix GUIDs with `sg` after reboot": after FNP, `mstflint q`
   can show `Base GUID: N/A` while the identity is physically intact
-  (MNVDA desync) — embedding avoids the whole class (docs/41).
+  (MNVDA desync) — embedding avoids the whole class
+  (docs/750-exp/140-post-fnp-guid-desync).
 
 ## Rule 4 — Offline gates (all must pass before burn)
 
-1. Full CRC verify of the built image (project: `mlxini.py verify --deep`)
+1. Full CRC verify of the built image (project: `mlxfwutil.py verify --deep`)
    → PASS. (`verify` also prints the info line
    `signature 0xA0: fresh|stale|rsa|empty|missing|v2` — info, does not
    change rc.)
@@ -76,23 +88,23 @@ card's identity embedded in the image beforehand:
 3. Rule-2 checks (0x30 in place, round-trip).
 4. Diff vs base: only the intended zones changed (section-wise diff; no
    accidental touches of code/signature sections).
-5. 0xA0 digest (Rule 5): `mlxini.py sign --check <img>` → rc 0 (fresh) —
+5. 0xA0 digest (Rule 5): `mlxfwutil.py sign --check <img>` → rc 0 (fresh) —
    mandatory when the burn will be plain/MCC on a non-secure card.
 
 ## Rule 5 — 0xA0 digest: recompute on every content change (sign)
 
 Plain/MCC burn on a non-secure card checks the image's 0xA0 SHA-256 digest
-(FW content-digest gate, unconditional; docs/20 §14.5). A stale digest
+(FW content-digest gate, unconditional; docs/250-re/110-signing/045-error-branches). A stale digest
 fails the burn deterministically after the full download
 (`-E- The Digest in the signature is wrong`, MCC 0x2) — a wasted flash
 cycle.
 
 - Default: after ANY content change (ini, code, GUID, PSID, …) recompute
-  the digest — `mlxini.py sign <img>` (bit-equivalent to
+  the digest — `mlxfwutil.py sign <img>` (bit-equivalent to
   `mstflint -i <img> sign` with no keys = `FwInsertSHA256`; in-place,
   idempotent — a fresh image comes back 0 diff). Skip only on explicit
   owner/coordinator instruction.
-- Check: `mlxini.py sign --check <img>` — rc 0 fresh / 1 stale /
+- Check: `mlxfwutil.py sign --check <img>` — rc 0 fresh / 1 stale /
   2 rsa/empty/missing/V2. Gate before handoff to burn (Rule 4.5).
 - `--force`: overwrites an RSA-signed 0xA0 (normalizes the section,
   uuid fields → 0; mstflint parity) — a deliberate act, say so in the
@@ -101,20 +113,22 @@ cycle.
   out of scope.
 - `--no_fw_ctrl` burn (direct path) does NOT check the digest — the
   recompute is not needed there (still harmless; keep the default).
-- Self-signed (RSA-path, Rule 6) images: do NOT run `mlxini.py sign` /
+- Self-signed (RSA-path, Rule 6) images: do NOT run `mlxfwutil.py sign` /
   `mstflint sign` on them — it would overwrite 0xA0 and zero the uuid
   fields, destroying the RSA signature. `sign --check` rc 2
   (`0xA0: empty`) is the expected, correct state for Rule-6 builds.
 
 ## Rule 6 — Self-signed secure-fw build (own vault + RSA-4096)
 
-Live-proven path (2026-10-29, securefw-gates cycle; RE map, recipes and
-md5 tables — mlxini `docs/21`, chronicle `docs/20` §14.6). For secure
+Live-proven path (2026-10-29, securefw-gates cycle; RE map and md5
+tables — mlxini `docs/250-re/110-signing/035-securefw-map`, recipes —
+`docs/850-howto/180-securefw-recipes`, chronicle —
+`docs/750-exp/170-securefw-live-gates`). For secure
 cards (`q` → `Security Attributes: secure-fw`) the burn-verify gate
 resolves the image's 0xA3 `keypair_uuid` against the RUNNING image's key
 vault (16 slots: 0xA1×8 + 0xA4×8). A self-signed image therefore passes
 only after OUR vault is running: first install via FNP
-(mellanox-flash-ops + docs/40 §6/§9.1), then every later own build goes
+(mellanox-flash-ops + docs/850-howto/100 §6/§9.1), then every later own build goes
 plain `-y burn` ("FNP once → plain onwards").
 
 Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
@@ -143,7 +157,7 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
    Reference implementation: mlxini `scripts/secfw/parity_gate.py`.
 6. Gates before handoff: Rule 4 items 1-4 (`verify --deep` PASS,
    `mstflint -i <img> verify` bootable, 0x30 checks, diff whitelist) +
-   the parity gate. Burn handoff: docs/40 §6 (secure) — FNP first
+   the parity gate. Burn handoff: docs/850-howto/100 §6 (secure) — FNP first
    install, plain afterwards; GUID/MAC embedding (Rule 3) is mandatory
    for the FNP leg (`--ignore_dev_data` takes identity from the image).
 
@@ -152,32 +166,33 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 1. Identify the card; `mstflint -d <BDF> q` — record PSID, FW version,
    Base GUID/MAC.
 2. Backup `ri` (mellanox-flash-ops) — known-good in reach.
-3. Pick a base image: same chip / PSID family (docs/40 §3, §11).
+3. Pick a base image: same chip / PSID family (docs/850-howto/100 §3, §11).
 4. Extract the ini from the base (0x30).
-5. Edit the config; add the build-ID comment (Rule 1); trim vendor
-   comments if over budget (Rule 2).
-6. Inject; run the in-place checks (Rule 2).
+5. Edit the config; add the build-ID comment (Rule 1); if over budget,
+   inject with `--repack-force` — relocation is gated-safe (Rule 2);
+   trimming `;;` comments is optional for a minimal diff.
+6. Inject; run the Rule-2 checks (round-trip, verify PASS, 0xA0 fresh).
 7. Embed GUID/MAC of the target card (Rule 3).
-8. PSID/name/description if the SKU changes (docs/40 §5).
-9. Recompute the 0xA0 digest — `mlxini.py sign <img>` (Rule 5; default
+8. PSID/name/description if the SKU changes (docs/850-howto/100 §5).
+9. Recompute the 0xA0 digest — `mlxfwutil.py sign <img>` (Rule 5; default
    for every content-modified build).
 10. Offline gates (Rule 4), incl. `sign --check` rc 0.
 11. Secure card + own signature: Rule 6 instead of step 9 (vault +
     set_public_keys → sign + parity gate); hand off to burn — FNP once
-    to install the vault, plain afterwards (docs/40 §6, mlxini docs/21
-    §10).
-12. Hand off to burn: mellanox-flash-ops + docs/40 §6.
+    to install the vault, plain afterwards (docs/850-howto/100 §6, mlxini
+    docs/850-howto/180-securefw-recipes).
+12. Hand off to burn: mellanox-flash-ops + docs/850-howto/100 §6.
 
 ## Common mistakes
 
 - `#` comment syntax — the ini uses `;`.
-- Oversized build-ID / untrimmed ini → section relocation → corrupted
-  FNP-burn (historical incident, mlxini journal 2026-09-21 §13).
+- `--unsafe-relocation` in a production build — legacy reproducer of the
+  burn-order bug class; bypasses the pre-write gate.
 - "The text did not change, so the size did not change" — zlib drift.
 - Burning an image with zeroed GUIDs under `--ignore_dev_data` — the
   card loses its identity.
 - Handing off a content-modified image for a plain burn without
-  `mlxini.py sign` — deterministic MCC 0x2 "The Digest in the signature
+  `mlxfwutil.py sign` — deterministic MCC 0x2 "The Digest in the signature
   is wrong" after the full download (stale 0xA0).
 - Trimming key=value lines "because FW does not read 0x30 anyway" —
   kills `dc`-parity and the reference value.
