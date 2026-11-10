@@ -23,7 +23,7 @@ section (zlib-compressed ini — what `mstflint dc` prints):
 - Format (≤10-20 words total):
   `; <project> <build-name> (<yyyy-mm-dd>, <ref>): <what/why>`
   Precedent:
-  `; mlxini iRISC boot-injection PoC (2026-09-21, docs/55): shellcode @ dc 0x38d730 -> host CR 0x23f0 = 0xbadc0001`
+  `; mlxini iRISC boot-injection PoC (2026-09-21, docs/250-re/120-irisc/025-boot-injection): shellcode @ dc 0x38d730 -> host CR 0x23f0 = 0xbadc0001`
 - Purpose: on-card discrimination — `mstflint -d <BDF> dc | head` must
   immediately tell a custom image from a vendor one and name the build.
 
@@ -36,7 +36,8 @@ reorders the ITOC entry, the burn-order invariant is gated unconditionally
 0xA0 is auto-signed after any relocation. The historical corruption
 (mlxini journal 2026-09-21 §13; reattributed 2026-10-31: INI was
 written-then-erased by a sector revisit — burn-order violation of the
-pre-cycle allocator, mlxini docs/10 §4.9 + docs/55 §10) is reproducible
+pre-cycle allocator, mlxini docs/250-re/100-formats/050-fs4-burn-order +
+docs/250-re/120-irisc/025-boot-injection) is reproducible
 today only via the research flag `--unsafe-relocation` (bypasses the
 pre-write gate; NEVER for production builds).
 
@@ -73,7 +74,8 @@ card's identity embedded in the image beforehand:
   writes mDevInfo + MFG_INFO, self-verify).
 - Never plan "fix GUIDs with `sg` after reboot": after FNP, `mstflint q`
   can show `Base GUID: N/A` while the identity is physically intact
-  (MNVDA desync) — embedding avoids the whole class (docs/41).
+  (MNVDA desync) — embedding avoids the whole class
+  (docs/750-exp/140-post-fnp-guid-desync).
 
 ## Rule 4 — Offline gates (all must pass before burn)
 
@@ -92,7 +94,7 @@ card's identity embedded in the image beforehand:
 ## Rule 5 — 0xA0 digest: recompute on every content change (sign)
 
 Plain/MCC burn on a non-secure card checks the image's 0xA0 SHA-256 digest
-(FW content-digest gate, unconditional; docs/20 §14.5). A stale digest
+(FW content-digest gate, unconditional; docs/250-re/110-signing/045-error-branches). A stale digest
 fails the burn deterministically after the full download
 (`-E- The Digest in the signature is wrong`, MCC 0x2) — a wasted flash
 cycle.
@@ -118,8 +120,10 @@ cycle.
 
 ## Rule 6 — Self-signed secure-fw build (own vault + RSA-4096)
 
-Live-proven path (2026-10-29, securefw-gates cycle; RE map, recipes and
-md5 tables — mlxini `docs/21`, chronicle `docs/20` §14.6). For secure
+Live-proven path (2026-10-29, securefw-gates cycle; RE map and md5
+tables — mlxini `docs/250-re/110-signing/035-securefw-map`, recipes —
+`docs/850-howto/180-securefw-recipes`, chronicle —
+`docs/750-exp/170-securefw-live-gates`). For secure
 cards (`q` → `Security Attributes: secure-fw`) the burn-verify gate
 resolves the image's 0xA3 `keypair_uuid` against the RUNNING image's key
 vault (16 slots: 0xA1×8 + 0xA4×8). A self-signed image therefore passes
@@ -175,8 +179,8 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 10. Offline gates (Rule 4), incl. `sign --check` rc 0.
 11. Secure card + own signature: Rule 6 instead of step 9 (vault +
     set_public_keys → sign + parity gate); hand off to burn — FNP once
-    to install the vault, plain afterwards (docs/850-howto/100 §6, mlxini docs/21
-    §10).
+    to install the vault, plain afterwards (docs/850-howto/100 §6, mlxini
+    docs/850-howto/180-securefw-recipes).
 12. Hand off to burn: mellanox-flash-ops + docs/850-howto/100 §6.
 
 ## Common mistakes

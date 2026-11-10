@@ -94,7 +94,8 @@ Card security class first: `mstflint -d <BDF> q` → `Security Attributes:`
 secure card — different write-path physics, NO canon in this skill: plain
 burn → `Rejected authentication` (0x5), `--no_fw_ctrl` →
 `MFE_NO_FLASH_DETECTED` (direct SPI blocked); the write paths (self-signed
-vector, FNP) are research territory — docs/20 §14-15.
+vector, FNP) are research territory — docs/250-re/110-signing/045-error-branches
++ 050-spi-read-policy.
 
 | Situation | Mode |
 |---|---|
@@ -108,7 +109,7 @@ mstflint -d <BDF> -i <img.bin> -y burn
 - Plain/MCC burn on a content-modified image with a **stale 0xA0 digest**
   fails deterministically after the full download:
   `-E- Burning FS4 image failed: The Digest in the signature is wrong`
-  (MCC 0x2 — the FW content-digest gate, docs/20 §14.5). The pre-burn check
+  (MCC 0x2 — the FW content-digest gate, docs/250-re/110-signing/045-error-branches). The pre-burn check
   below exists to prevent exactly this — do NOT retry blind or "escalate"
   to FNP-flags: an extra flash cycle for nothing.
 - `--no_fw_ctrl` (direct path) — a valid ALTERNATIVE on non-secure cards:
@@ -124,7 +125,7 @@ mstflint -d <BDF> -i <img.bin> -y burn
 ### Pre-burn digest check (non-secure card, plain burn — mandatory)
 
 FW checks the image's 0xA0 SHA-256 digest on plain (MCC) burn; a stale
-digest = deterministic 0x2 after the full download (docs/20 §14.5).
+digest = deterministic 0x2 after the full download (docs/250-re/110-signing/045-error-branches).
 `mstflint sign` (no keys = `FwInsertSHA256`) is idempotent — a fresh image
 comes back 0 diff. Use the md5 as the check, on the server, right before
 the burn (one ssh call):
