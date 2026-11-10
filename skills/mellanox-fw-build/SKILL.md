@@ -6,11 +6,11 @@ description: Use when building or customizing Mellanox ConnectX firmware images 
 # Mellanox custom FW build (offline, before any burn)
 
 Scope: offline image assembly/patching. The burn itself is out of scope —
-use the mellanox-flash-ops skill + `docs/40-cross-flash-ops.md` in the
+use the mellanox-flash-ops skill + `docs/850-howto/100-cross-flash-ops.md` in the
 mlxini repo (read before any burn).
 
 Project tooling (mlxini repo): command table and the canonical pipeline —
-`docs/40` §4. This skill carries the rules, tool-agnostic.
+`docs/850-howto/100` §4. This skill carries the rules, tool-agnostic.
 
 ## Rule 1 — Build identifier (mandatory)
 
@@ -124,7 +124,7 @@ cards (`q` → `Security Attributes: secure-fw`) the burn-verify gate
 resolves the image's 0xA3 `keypair_uuid` against the RUNNING image's key
 vault (16 slots: 0xA1×8 + 0xA4×8). A self-signed image therefore passes
 only after OUR vault is running: first install via FNP
-(mellanox-flash-ops + docs/40 §6/§9.1), then every later own build goes
+(mellanox-flash-ops + docs/850-howto/100 §6/§9.1), then every later own build goes
 plain `-y burn` ("FNP once → plain onwards").
 
 Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
@@ -153,7 +153,7 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
    Reference implementation: mlxini `scripts/secfw/parity_gate.py`.
 6. Gates before handoff: Rule 4 items 1-4 (`verify --deep` PASS,
    `mstflint -i <img> verify` bootable, 0x30 checks, diff whitelist) +
-   the parity gate. Burn handoff: docs/40 §6 (secure) — FNP first
+   the parity gate. Burn handoff: docs/850-howto/100 §6 (secure) — FNP first
    install, plain afterwards; GUID/MAC embedding (Rule 3) is mandatory
    for the FNP leg (`--ignore_dev_data` takes identity from the image).
 
@@ -162,22 +162,22 @@ Build steps (ORDER MATTERS — the 0xA4 vault is inside the signed data):
 1. Identify the card; `mstflint -d <BDF> q` — record PSID, FW version,
    Base GUID/MAC.
 2. Backup `ri` (mellanox-flash-ops) — known-good in reach.
-3. Pick a base image: same chip / PSID family (docs/40 §3, §11).
+3. Pick a base image: same chip / PSID family (docs/850-howto/100 §3, §11).
 4. Extract the ini from the base (0x30).
 5. Edit the config; add the build-ID comment (Rule 1); if over budget,
    inject with `--repack-force` — relocation is gated-safe (Rule 2);
    trimming `;;` comments is optional for a minimal diff.
 6. Inject; run the Rule-2 checks (round-trip, verify PASS, 0xA0 fresh).
 7. Embed GUID/MAC of the target card (Rule 3).
-8. PSID/name/description if the SKU changes (docs/40 §5).
+8. PSID/name/description if the SKU changes (docs/850-howto/100 §5).
 9. Recompute the 0xA0 digest — `mlxfwutil.py sign <img>` (Rule 5; default
    for every content-modified build).
 10. Offline gates (Rule 4), incl. `sign --check` rc 0.
 11. Secure card + own signature: Rule 6 instead of step 9 (vault +
     set_public_keys → sign + parity gate); hand off to burn — FNP once
-    to install the vault, plain afterwards (docs/40 §6, mlxini docs/21
+    to install the vault, plain afterwards (docs/850-howto/100 §6, mlxini docs/21
     §10).
-12. Hand off to burn: mellanox-flash-ops + docs/40 §6.
+12. Hand off to burn: mellanox-flash-ops + docs/850-howto/100 §6.
 
 ## Common mistakes
 

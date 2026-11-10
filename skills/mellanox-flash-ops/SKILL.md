@@ -72,7 +72,7 @@ ssh <host> 'ps -p <PID> || echo mstflint-exited; tail -c 400 /root/x.log | tr "\
   lines (`grep -cE "^-E-" log`). `Burning FW image without signatures - OK`
   is the `--no_fw_ctrl`-path marker — absent in plain burn; both paths
   must reach `Restoring signature - OK` or the flash is left unfinalized
-  (docs/40 §6).
+  (docs/850-howto/100 §6).
 - ri/rb done = process exited + file the expected size (table above).
 - New FW becomes active after a CHIP reset — `mstfwreset` (~10–20 s, host
   stays up): the "Activate after burn" section.
@@ -99,7 +99,7 @@ vector, FNP) are research territory — docs/20 §14-15.
 | Situation | Mode |
 |---|---|
 | Live card + content-modified image (stock + patches, signatures untouched — every custom lab build), non-secure card | **plain `-y burn`** — canonical; pre-burn digest check below (mandatory) |
-| FNP («Flash Not Present», MFT livefish docs) recovery / cross-PSID | legacy flags (`--nofs`, `--ignore_dev_data`, `-ocr`, `-apc`) — docs/40 §6 |
+| FNP («Flash Not Present», MFT livefish docs) recovery / cross-PSID | legacy flags (`--nofs`, `--ignore_dev_data`, `-ocr`, `-apc`) — docs/850-howto/100 §6 |
 
 ```sh
 mstflint -d <BDF> -i <img.bin> -y burn
@@ -118,7 +118,7 @@ mstflint -d <BDF> -i <img.bin> -y burn
   own recommendation: "Unsupported operation under Controlled FW, please
   retry with --no_fw_ctrl"). NOT for secure cards (see above).
 - Flags/precedents from past journals are NOT a mode source — they drift
-  from this skill. This skill + docs/40 §6 are the only canon.
+  from this skill. This skill + docs/850-howto/100 §6 are the only canon.
 - Rule 3 GUID embed (mellanox-fw-build) stays mandatory as standard.
 
 ### Pre-burn digest check (non-secure card, plain burn — mandatory)
@@ -226,5 +226,5 @@ ssh <host> 'mstflint -i <img.bin> q'    # look at the `Base GUID:` line
 
 Legacy burn flags (`-apc/--allow_psid_change`, `--nofs`, `--ignore_dev_data`,
 `-ocr`) and the full FNP/cross-PSID procedure (PSID step, recovery, verify,
-risks, silicon matrix): `docs/40-cross-flash-ops.md` §6 — mode selection
+risks, silicon matrix): `docs/850-howto/100-cross-flash-ops.md` §6 — mode selection
 stays in THIS skill.
