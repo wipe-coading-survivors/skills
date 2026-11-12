@@ -9,7 +9,7 @@ QUADLET_USER_DIR ?= $(HOME)/.config/containers/systemd
 OPENCODE_CONFIG ?= $(HOME)/.config/opencode/opencode.jsonc
 MCP_URL ?= http://127.0.0.1:8080/mcp
 
-.PHONY: build test smoke run-http install-user
+.PHONY: build test smoke run-http install-user install-links
 
 build:
 	@mkdir -p .build; CTX=$$(mktemp -d .build/ctx-XXXXXX); \
@@ -37,3 +37,6 @@ install-user: build
 	systemctl --user daemon-reload
 	systemctl --user restart skills-mcp.service
 	node scripts/patch-mcp-config.mjs set $(OPENCODE_CONFIG) skills '{"type":"remote","url":"$(MCP_URL)"}'
+
+install-links:
+	LINKS_ONLY=1 scripts/install.sh
